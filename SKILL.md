@@ -136,11 +136,14 @@ iterativo, todos os findings do turno atual são apresentados em pt-BR
 `AskUserQuestion`. Severity alta muda o teor da pergunta final
 (recomenda abortar) — **nunca** muda a ordem de divulgação dos findings.
 
-**Execução:**
+**Execução:** o subcomando `start` exige `--accepted-by-user` para
+prevenir que Claude dispare uma revisão Codex sem confirmação. Sempre
+perguntar antes de passar a flag.
 
 ```bash
-# Turno 1
+# Turno 1 (só após o usuário aceitar a sugestão de uma linha!)
 "$SKILLS_PYTHON" "$USERPROFILE/.claude/skills/codex/scripts/codex_dialogue.py" start \
+  --accepted-by-user \
   --plan-file "<path>" \
   --cwd "<cwd>" \
   [--max-turns N]

@@ -310,6 +310,15 @@ def _invoke_wrapper_plan_review(
 # --------------------------------------------------------------- subcommands
 
 def cmd_start(args: argparse.Namespace) -> int:
+    if not getattr(args, "accepted_by_user", False):
+        _emit({
+            "status": "error",
+            "reason": "needs_user_acceptance",
+            "hint": "Pergunte ao usuário se ele quer rodar plan-review-iter "
+                    "antes de chamar `start`. Só passe --accepted-by-user "
+                    "depois de uma confirmação explícita.",
+        })
+        return 0
     plan_path = Path(args.plan_file)
     if not plan_path.is_file():
         _emit({"status": "error", "reason": "plan_file_not_found"})
@@ -530,12 +539,22 @@ def _parse_cli(argv: Optional[List[str]] = None) -> argparse.Namespace:
     )
     sub = parser.add_subparsers(dest="subcommand", required=True)
 
-    p_start = sub.add_parser("start", help="initialise a dialogue")
+    p_start = sub.add_parser(
+        "start",
+        help="inicializa um diálogo iterativo (requer --accepted-by-user).",
+    )
     p_start.add_argument("--plan-file", required=True)
     p_start.add_argument("--cwd", default=None)
     p_start.add_argument("--max-turns", type=int, default=None,
-                         help=f"override max turns (default {DEFAULT_MAX_TURNS}, "
-                              "env CODEX_DIALOGUE_MAX_TURNS, range 1-20)")
+                         help=f"sobrescreve o número máximo de turnos "
+                              f"(default {DEFAULT_MAX_TURNS}, env "
+                              "CODEX_DIALOGUE_MAX_TURNS, range 1-20).")
+    p_start.add_argument(
+        "--accepted-by-user", action="store_true",
+        help="OBRIGATÓRIO: marca que o usuário já aceitou explicitamente "
+             "rodar o diálogo iterativo. Sem essa flag, o `start` recusa "
+             "para evitar disparar uma revisão Codex antes da aprovação.",
+    )
 
     p_next = sub.add_parser("next-turn", help="submit a revised plan for the next turn")
     p_next.add_argument("--dialogue-id", required=True)

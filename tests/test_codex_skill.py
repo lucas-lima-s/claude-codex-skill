@@ -733,9 +733,22 @@ def test_dialogue_lifecycle(r: Runner) -> None:
         plan = tmp / "plan_v1.md"
         plan.write_text("# Plano v1\nMexer em foo.py.\n", encoding="utf-8")
 
+        # start sem --accepted-by-user → recusa
+        proc = subprocess.run(
+            [PYTHON, str(dialogue), "start", "--plan-file", str(plan), "--cwd", str(SKILL_DIR)],
+            env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
+        )
+        try:
+            data = json.loads(proc.stdout)
+        except json.JSONDecodeError:
+            data = {}
+        r.eq(data.get("status"), "error", "start sem --accepted-by-user → status=error")
+        r.eq(data.get("reason"), "needs_user_acceptance",
+             "reason=needs_user_acceptance (guard rail R5-F1)")
+
         # start
         proc = subprocess.run(
-            [PYTHON, str(dialogue), "start", "--plan-file", str(plan), "--cwd", str(SKILL_DIR), "--max-turns", "2"],
+            [PYTHON, str(dialogue), "start", "--accepted-by-user", "--plan-file", str(plan), "--cwd", str(SKILL_DIR), "--max-turns", "2"],
             env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
         )
         try:
