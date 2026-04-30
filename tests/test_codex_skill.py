@@ -117,6 +117,7 @@ def _base_env(behavior: str = "success", timeout: str = "10",
     env["CODEX_WRAPPER_TIMEOUT_SECONDS"] = timeout
     env["CODEX_WRAPPER_DISABLE_HEARTBEAT"] = "1"
     env["FAKE_CODEX_BEHAVIOR"] = behavior
+    env["CODEX_LOCALE"] = "en-US"
     if extra:
         env.update(extra)
     return env
@@ -156,7 +157,7 @@ def test_plan_review_modes(r: Runner) -> None:
     with _tempdir() as tmp:
         plan = tmp / "plan.md"
         plan.write_text(
-            "# Plano teste\n\nMexer em scripts/normalize_codex_result.py para algo.\n",
+            "# Test plan\n\nTouch scripts/normalize_codex_result.py for something.\n",
             encoding="utf-8",
         )
         cwd = str(SKILL_DIR)
@@ -172,8 +173,8 @@ def test_plan_review_modes(r: Runner) -> None:
         # invalid_json → retry → still error after retry
         result, _, _ = _run_wrapper("plan-review", "invalid_json", common)
         r.eq(result.get("status"), "error", "plan-review/invalid_json status=error")
-        r.in_("json estruturado", (result.get("summary") or "").lower(),
-              "plan-review/invalid_json summary menciona JSON")
+        r.in_("structured json", (result.get("summary") or "").lower(),
+              "plan-review/invalid_json summary mentions JSON")
 
         # partial → degraded best-effort
         result, _, _ = _run_wrapper("plan-review", "partial", common)
@@ -183,8 +184,8 @@ def test_plan_review_modes(r: Runner) -> None:
         # nonzero exit
         result, _, _ = _run_wrapper("plan-review", "nonzero", common)
         r.eq(result.get("status"), "error", "plan-review/nonzero status=error")
-        r.in_("status diferente de zero (2)", result.get("summary", ""),
-              "plan-review/nonzero summary menciona exit 2")
+        r.in_("non-zero status (2)", result.get("summary", ""),
+              "plan-review/nonzero summary mentions exit 2")
 
         # needs_input
         result, _, _ = _run_wrapper("plan-review", "needs_input", common)
@@ -217,7 +218,7 @@ def test_verify_mode(r: Runner) -> None:
         payload = tmp / "payload.json"
         payload.write_text(json.dumps({
             "cwd": str(SKILL_DIR),
-            "last_assistant_message": "Refatorei normalize_codex_result.py",
+            "last_assistant_message": "Refactored normalize_codex_result.py",
             "git_status_short": " M scripts/normalize_codex_result.py",
             "git_diff_worktree": "diff --git a/x b/x\n@@ -1 +1,2 @@\n+new line\n",
             "git_diff_cached": "",
@@ -236,7 +237,7 @@ def test_ask_mode(r: Runner) -> None:
     r.section("ask × scenarios")
     with _tempdir() as tmp:
         question = tmp / "q.txt"
-        question.write_text("Qual a complexidade de quicksort?", encoding="utf-8")
+        question.write_text("What's the complexity of quicksort?", encoding="utf-8")
         common = ["--cwd", str(SKILL_DIR), "--question-file", str(question)]
 
         result, _, _ = _run_wrapper("ask", "success", common)
@@ -249,7 +250,7 @@ def test_insight_mode(r: Runner) -> None:
     r.section("insight × scenarios")
     with _tempdir() as tmp:
         focus = tmp / "focus.txt"
-        focus.write_text("Foque em arquitetura.", encoding="utf-8")
+        focus.write_text("Focus on architecture.", encoding="utf-8")
         common = ["--cwd", str(SKILL_DIR), "--focus-file", str(focus)]
 
         result, _, _ = _run_wrapper("insight", "success", common)
@@ -294,7 +295,7 @@ def test_review_packet_window(r: Runner) -> None:
 
         # Plan with path:line citation → ±50 window (max-lines default 300, file=500)
         plan = tmp / "plan.md"
-        plan.write_text("Refatorar src/huge.py:200 com cuidado.\n", encoding="utf-8")
+        plan.write_text("Refactor src/huge.py:200 carefully.\n", encoding="utf-8")
         out = tmp / "packet.md"
         proc = subprocess.run(
             [PYTHON, str(BUILDER),
@@ -310,7 +311,7 @@ def test_review_packet_window(r: Runner) -> None:
 
         # Plan without :line on a >max_lines file → first N lines
         plan2 = tmp / "plan2.md"
-        plan2.write_text("Mexer em src/huge.py.\n", encoding="utf-8")
+        plan2.write_text("Touch src/huge.py.\n", encoding="utf-8")
         out2 = tmp / "packet2.md"
         subprocess.run(
             [PYTHON, str(BUILDER),
@@ -328,7 +329,7 @@ def test_review_packet_window(r: Runner) -> None:
         small = big_dir / "small.py"
         small.write_text("\n".join(f"# {i}" for i in range(50)) + "\n", encoding="utf-8")
         plan3 = tmp / "plan3.md"
-        plan3.write_text("Mexer em src/small.py:5 quickly.\n", encoding="utf-8")
+        plan3.write_text("Touch src/small.py:5 quickly.\n", encoding="utf-8")
         out3 = tmp / "packet3.md"
         subprocess.run(
             [PYTHON, str(BUILDER),
@@ -356,7 +357,7 @@ def test_review_packet_max_files(r: Runner) -> None:
 
         plan = tmp / "plan.md"
         plan.write_text(
-            "# plano\nTouch the following files:\n"
+            "# plan\nTouch the following files:\n"
             + "\n".join(f"- {c}" for c in cited),
             encoding="utf-8",
         )
@@ -379,7 +380,7 @@ def test_review_packet_max_files(r: Runner) -> None:
 
 
 def test_review_packet_byte_truncation(r: Runner) -> None:
-    r.section("build_review_packet × truncamento por max_bytes")
+    r.section("build_review_packet × byte truncation")
     with _tempdir() as tmp:
         big = tmp / "big.py"
         big.write_text("\n".join(f"# line {i:04d}" for i in range(2000)),
@@ -401,7 +402,7 @@ def test_review_packet_byte_truncation(r: Runner) -> None:
 
 
 def test_review_packet_empty_plan(r: Runner) -> None:
-    r.section("build_review_packet × plano vazio")
+    r.section("build_review_packet × empty plan")
     with _tempdir() as tmp:
         plan = tmp / "empty.md"
         plan.write_text("   \n", encoding="utf-8")
@@ -421,7 +422,7 @@ def test_wrapper_auto_packet(r: Runner) -> None:
     with _tempdir() as tmp:
         plan = tmp / "plan.md"
         plan.write_text(
-            "Mexer em scripts/normalize_codex_result.py:50 com cuidado.\n",
+            "Touch scripts/normalize_codex_result.py:50 carefully.\n",
             encoding="utf-8",
         )
         common = ["--cwd", str(SKILL_DIR), "--last-message-file", str(plan)]
@@ -431,7 +432,7 @@ def test_wrapper_auto_packet(r: Runner) -> None:
 
 
 def test_batch_ask_speedup(r: Runner) -> None:
-    r.section("batch-ask × speedup paralelo")
+    r.section("batch-ask × parallel speedup")
     with _tempdir() as tmp:
         batch = {
             "max_parallel": 4,
@@ -537,7 +538,7 @@ def test_batch_delegate_overlap(r: Runner) -> None:
 
 
 def test_batch_delegate_violation(r: Runner) -> None:
-    r.section("batch-delegate × write_set_violated quando Codex extrapola")
+    r.section("batch-delegate × write_set_violated when Codex overshoots")
     with _tempdir() as tmp:
         batch = {
             "tasks": [
@@ -618,7 +619,7 @@ def test_telemetry_rotation(r: Runner) -> None:
 
 
 def test_ps1_stub(r: Runner) -> None:
-    r.section("PowerShell stub × forwarding de args")
+    r.section("PowerShell stub × args forwarding")
     if sys.platform != "win32":
         print("  SKIP  (non-Windows runtime)")
         return
@@ -728,7 +729,7 @@ def test_codex_config(r: Runner) -> None:
 
 
 def test_disable_heartbeat_silent(r: Runner) -> None:
-    r.section("heartbeat × CODEX_WRAPPER_DISABLE_HEARTBEAT=1 silencia stderr")
+    r.section("heartbeat × CODEX_WRAPPER_DISABLE_HEARTBEAT=1 silences stderr")
     with _tempdir() as tmp:
         plan = tmp / "p.md"
         plan.write_text("hb test\n", encoding="utf-8")
@@ -749,9 +750,9 @@ def test_analyze_plan_complexity(r: Runner) -> None:
         return
 
     with _tempdir() as tmp:
-        # Caso 1: plano simples (1 linha, sem keywords) → score 0
+        # Case 1: simple plan (1 line, no keywords) → score 0
         simple = tmp / "simple.md"
-        simple.write_text("# Plano\n\nMexer em scripts/foo.py para algo.\n", encoding="utf-8")
+        simple.write_text("# Plan\n\nTouch scripts/foo.py for something.\n", encoding="utf-8")
         proc = subprocess.run(
             [PYTHON, str(helper), "--plan-file", str(simple)],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
@@ -760,8 +761,8 @@ def test_analyze_plan_complexity(r: Runner) -> None:
             data = json.loads(proc.stdout)
         except json.JSONDecodeError:
             data = {}
-        r.eq(data.get("suggest_iterative"), False, "plano simples → suggest_iterative=false")
-        r.le(data.get("score") or 0, 1, "plano simples → score baixo")
+        r.eq(data.get("suggest_iterative"), False, "simple plan → suggest_iterative=false")
+        r.le(data.get("score") or 0, 1, "simple plan → low score")
 
         # Case 2: sensitive plan (cross-module + keywords + 3 phases + large)
         sensitive_lines = ["# Sensitive plan", ""]
@@ -769,7 +770,7 @@ def test_analyze_plan_complexity(r: Runner) -> None:
         for n in range(1, 4):
             sensitive_lines.append(f"## Phase {n}")
             for f_idx in range(8):
-                sensitive_lines.append(f"- Mexer em scripts/file{f_idx}_{n}.py")
+                sensitive_lines.append(f"- Touch scripts/file{f_idx}_{n}.py")
             sensitive_lines.append("Detalhes: " + "X" * 800)
         sensitive_text = "\n".join(sensitive_lines)
         sensitive = tmp / "sensitive.md"
@@ -814,7 +815,7 @@ def test_dialogue_lifecycle(r: Runner) -> None:
     env = _base_env(behavior="success", timeout="30")
     with _tempdir() as tmp:
         plan = tmp / "plan_v1.md"
-        plan.write_text("# Plano v1\nMexer em foo.py.\n", encoding="utf-8")
+        plan.write_text("# Plan v1\nTouch foo.py.\n", encoding="utf-8")
 
         # start sem --accepted-by-user → recusa
         proc = subprocess.run(
@@ -892,7 +893,7 @@ def test_dialogue_lifecycle(r: Runner) -> None:
 
         # abort on a fresh dialogue (no next-turn)
         plan2 = tmp / "abort_plan.md"
-        plan2.write_text("# Plano para abortar\n", encoding="utf-8")
+        plan2.write_text("# Plan to abort\n", encoding="utf-8")
         proc = subprocess.run(
             [PYTHON, str(dialogue), "start", "--plan-file", str(plan2), "--cwd", str(SKILL_DIR), "--max-turns", "5"],
             env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
@@ -938,9 +939,9 @@ def test_dialogue_lifecycle(r: Runner) -> None:
 
 
 def test_reasoning_effort_override(r: Runner) -> None:
-    r.section("--reasoning-effort sobrescreve default por modo")
+    r.section("--reasoning-effort overrides per-mode default")
     with _tempdir() as tmp:
-        # Caso 1: --reasoning-effort high em modo verify (default seria medium).
+        # Case 1: --reasoning-effort high in verify mode (default would be medium).
         # We confirm that the argv received by Codex contains model_reasoning_effort=high.
         payload = tmp / "payload.json"
         payload.write_text(json.dumps({

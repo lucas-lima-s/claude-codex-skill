@@ -119,6 +119,7 @@ def _live_env(timeout: str = "300") -> Dict[str, str]:
     env.pop("CODEX_WRAPPER_CODEX_OVERRIDE", None)
     env["CODEX_WRAPPER_TIMEOUT_SECONDS"] = timeout
     env["CODEX_WRAPPER_DISABLE_HEARTBEAT"] = "1"
+    env["CODEX_LOCALE"] = "en-US"
     return env
 
 
@@ -200,9 +201,9 @@ def test_plan_review_real(r: Runner) -> None:
     with _tempdir() as tmp:
         plan = tmp / "plan.md"
         plan.write_text(
-            "# Plano: adicionar funcao de soma\n\n"
-            "Criar uma funcao Python `soma(a, b)` em `mod.py` que retorna a + b.\n"
-            "Adicionar um teste basico em `test_mod.py`.\n",
+            "# Plan: add a sum function\n\n"
+            "Create a Python function `add(a, b)` in `mod.py` that returns a + b.\n"
+            "Add a basic test in `test_mod.py`.\n",
             encoding="utf-8",
         )
         result, elapsed = _run_wrapper(
@@ -246,7 +247,7 @@ def test_ask_real(r: Runner) -> None:
 
 
 def test_verify_real(r: Runner) -> None:
-    r.section("LIVE verify (diff com bug)")
+    r.section("LIVE verify (diff with bug)")
     with _tempdir() as tmp:
         # Synthetic diff with a clear Python syntax bug: missing closing paren.
         diff = (
@@ -388,7 +389,7 @@ def test_delegate_outside_workspace(r: Runner) -> None:
 
 
 def test_batch_ask_real(r: Runner) -> None:
-    r.section("LIVE batch-ask (3 perguntas em paralelo)")
+    r.section("LIVE batch-ask (3 parallel questions)")
     with _tempdir() as tmp:
         payload = {
             "max_parallel": 3,
@@ -431,8 +432,8 @@ def test_needs_input_real(r: Runner) -> None:
     with _tempdir() as tmp:
         plan = tmp / "plan.md"
         plan.write_text(
-            "# Plano\n\n"
-            "Refatorar o sistema. Melhorar a performance. Adicionar testes.\n",
+            "# Plan\n\n"
+            "Refactor the system. Improve performance. Add tests.\n",
             encoding="utf-8",
         )
         result, elapsed = _run_wrapper(
