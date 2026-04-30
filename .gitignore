@@ -1,0 +1,19 @@
+# Telemetria local — paths e timestamps específicos da máquina
+cache/
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+
+# Editores
+.vscode/
+.idea/
+*.swp
+
+# Sistema
+.DS_Store
+Thumbs.db
+
+# Outputs temporários (caso alguém rode os scripts a partir do repo)
+*.log
+*.tmp

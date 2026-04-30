@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ClaudeCodexReviewResult",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["severity", "confidence", "summary", "findings", "block_recommended"],
+  "properties": {
+    "severity": {
+      "type": "string",
+      "enum": ["low", "medium", "high"]
+    },
+    "confidence": {
+      "type": "string",
+      "enum": ["low", "medium", "high"]
+    },
+    "summary": {
+      "type": "string",
+      "description": "One-paragraph summary of the review."
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["severity", "category", "title", "detail", "location"],
+        "properties": {
+          "severity": {
+            "type": "string",
+            "enum": ["low", "medium", "high"]
+          },
+          "category": {
+            "type": "string",
+            "description": "Short category tag; empty string when not applicable."
+          },
+          "title": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "location": {
+            "type": "string",
+            "description": "file:line, file, or empty string when not applicable."
+          }
+        }
+      }
+    },
+    "block_recommended": {
+      "type": "boolean",
+      "description": "Only true when severity=high and confidence=high."
+    }
+  }
+}
