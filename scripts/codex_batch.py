@@ -51,7 +51,13 @@ from typing import Any, Dict, List, Optional, Tuple
 
 BIN_DIR = Path(__file__).resolve().parent
 WRAPPER = BIN_DIR / "invoke_codex_with_claude.py"
-DEFAULT_MAX_PARALLEL = 4
+
+sys.path.insert(0, str(BIN_DIR))
+from codex_config import get as _config_get, t  # noqa: E402
+
+DEFAULT_MAX_PARALLEL = int(_config_get("batch.default_max_parallel", 4))
+MAX_PARALLEL_CEILING = int(_config_get("batch.max_parallel_ceiling", 8))
+ITEM_SAFETY_TIMEOUT = int(_config_get("batch.item_safety_timeout_seconds", 900))
 
 
 def _resolve_python() -> str:
@@ -166,7 +172,7 @@ def _run_wrapper(
         except subprocess.TimeoutExpired:
             return task_id, {
                 "status": "error",
-                "summary": "Item do batch excedeu o teto de segurança de 900s.",
+                "summary": t("batch.summary.timeout", timeout=ITEM_SAFETY_TIMEOUT),
                 "duration_seconds": time.monotonic() - started,
                 "result": {},
             }
@@ -207,7 +213,7 @@ def _run_batch(sub_mode: str, batch: Dict[str, Any]) -> Dict[str, Any]:
     if not isinstance(tasks, list) or not tasks:
         return {
             "status": "error",
-            "summary": "Input do batch não tem tarefas.",
+            "summary": t("batch.summary.no_tasks"),
             "items": [],
         }
 
@@ -216,7 +222,7 @@ def _run_batch(sub_mode: str, batch: Dict[str, Any]) -> Dict[str, Any]:
         if overlaps:
             return {
                 "status": "error",
-                "summary": "Write-sets sobrepostos; recusando rodar batch-delegate.",
+                "summary": t("batch.summary.overlap"),
                 "overlaps": overlaps,
                 "items": [],
             }
@@ -240,7 +246,7 @@ def _run_batch(sub_mode: str, batch: Dict[str, Any]) -> Dict[str, Any]:
                 task_id = str(task.get("id") or "?")
                 item = {
                     "status": "error",
-                    "summary": f"Worker do batch falhou: {exc.__class__.__name__}",
+                    "summary": t("batch.summary.worker_crash", exc=exc.__class__.__name__),
                     "duration_seconds": 0.0,
                     "result": {},
                 }
@@ -279,17 +285,13 @@ def _run_batch(sub_mode: str, batch: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def main(argv: Optional[List[str]] = None) -> int:
-    parser = argparse.ArgumentParser(
-        description="Roda um batch do Codex (batch-ask read-only ou "
-                    "batch-delegate com write-set declarado).",
-    )
+    parser = argparse.ArgumentParser(description=t("batch.cli.description"))
     parser.add_argument(
         "sub_mode",
         choices=["batch-ask", "batch-delegate"],
-        help="sub-modo do batch (read-only ou delegate com write-set).",
+        help=t("batch.cli.help.sub_mode"),
     )
-    parser.add_argument("--input-file", required=True,
-                        help="caminho do arquivo JSON com o payload do batch.")
+    parser.add_argument("--input-file", required=True, help=t("batch.cli.help.input_file"))
     args = parser.parse_args(argv)
 
     try:
@@ -297,7 +299,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     except (OSError, json.JSONDecodeError) as exc:
         print(json.dumps({
             "status": "error",
-            "summary": f"Não foi possível ler o input do batch: {exc.__class__.__name__}",
+            "summary": t("batch.summary.read_failure", exc=exc.__class__.__name__),
         }, ensure_ascii=False))
         return 0
 

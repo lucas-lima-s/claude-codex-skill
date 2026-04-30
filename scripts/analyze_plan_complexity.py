@@ -47,10 +47,13 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-THRESHOLD_SCORE = 3
-SIZE_THRESHOLD_BYTES = 4 * 1024
-DISTINCT_FILES_THRESHOLD = 5
-PHASES_THRESHOLD = 2
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from codex_config import get as _config_get, t  # noqa: E402
+
+THRESHOLD_SCORE = int(_config_get("complexity.threshold_score", 3))
+SIZE_THRESHOLD_BYTES = int(_config_get("complexity.size_threshold_bytes", 4 * 1024))
+DISTINCT_FILES_THRESHOLD = int(_config_get("complexity.distinct_files_threshold", 5))
+PHASES_THRESHOLD = int(_config_get("complexity.phases_threshold", 2))
 
 # A single regex for paths matching common code/doc extensions. Anchored to
 # word boundaries to avoid false positives inside URLs or random tokens.
@@ -64,14 +67,16 @@ PHASE_HEADING_RE = re.compile(
     flags=re.IGNORECASE | re.MULTILINE,
 )
 
-SENSITIVE_KEYWORDS = (
-    "auth", "permission", "payment", "fiscal", "deploy", "migration",
-    "schema", "breaking", "rollback",
-)
+SENSITIVE_KEYWORDS = tuple(_config_get(
+    "complexity.sensitive_keywords",
+    ("auth", "permission", "payment", "fiscal", "deploy", "migration",
+     "schema", "breaking", "rollback"),
+))
 
-CROSS_MODULE_DIRS = (
-    "handler", "service", "repo", "api", "frontend", "backend",
-)
+CROSS_MODULE_DIRS = tuple(_config_get(
+    "complexity.cross_module_dirs",
+    ("handler", "service", "repo", "api", "frontend", "backend"),
+))
 
 
 def _emit(payload: Dict[str, Any]) -> None:
@@ -127,7 +132,7 @@ def _score_plan(plan_path: Path) -> Tuple[int, List[str]]:
         text = plan_path.read_text(encoding="utf-8", errors="replace")
     except (OSError, UnicodeDecodeError) as exc:
         # Surface as exception caller treats as "soft failure"
-        raise RuntimeError(f"não foi possível ler o plano: {exc.__class__.__name__}") from exc
+        raise RuntimeError(t("complexity.error.read_failure", exc=exc.__class__.__name__)) from exc
 
     try:
         size_bytes = plan_path.stat().st_size
@@ -168,20 +173,17 @@ def _score_plan(plan_path: Path) -> Tuple[int, List[str]]:
 
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Pontua a complexidade de um plano para decidir se vale "
-                    "sugerir o modo iterativo (plan-review-iter) em vez do "
-                    "plan-review one-shot.",
+        description=t("complexity.cli.description"),
     )
     parser.add_argument("--plan-file", required=True,
-                        help="Caminho do arquivo markdown do plano.")
+                        help=t("complexity.cli.help.plan_file"))
     parser.add_argument("--cwd", default=None,
-                        help="Reservado para uso futuro (sinais cross-module "
-                             "podem se tornar project-aware). Hoje é ignorado.")
+                        help=t("complexity.cli.help.cwd"))
     args = parser.parse_args(argv)
 
     plan_path = Path(args.plan_file)
     if not plan_path.is_file():
-        _emit(_safe_failure(f"arquivo de plano não encontrado: {plan_path}"))
+        _emit(_safe_failure(t("complexity.error.file_not_found", path=plan_path)))
         return 0
 
     try:
@@ -190,7 +192,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         _emit(_safe_failure(str(exc)))
         return 0
     except Exception as exc:  # never raise out of CLI
-        _emit(_safe_failure(f"erro_interno: {exc.__class__.__name__}"))
+        _emit(_safe_failure(t("complexity.error.internal", exc=exc.__class__.__name__)))
         return 0
 
     _emit({

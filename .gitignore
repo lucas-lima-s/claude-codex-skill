@@ -17,3 +17,7 @@ Thumbs.db
 # Outputs temporários (caso alguém rode os scripts a partir do repo)
 *.log
 *.tmp
+
+# Override local de configuração (deep-merge sobre config.default.json).
+# Cada usuário pode customizar settings/locales sem versionar.
+config.local.json

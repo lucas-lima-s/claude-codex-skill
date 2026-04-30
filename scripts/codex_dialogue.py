@@ -63,11 +63,14 @@ from typing import Any, Dict, List, Optional, Tuple
 BIN_DIR = Path(__file__).resolve().parent
 WRAPPER = BIN_DIR / "invoke_codex_with_claude.py"
 
+sys.path.insert(0, str(BIN_DIR))
+from codex_config import get as _config_get, t  # noqa: E402
+
 DIALOGUE_PREFIX = "codex_dialogue_"
-DEFAULT_MAX_TURNS = 3
-MIN_MAX_TURNS = 1
-MAX_MAX_TURNS = 20
-MAX_HISTORY_BYTES = 8 * 1024  # cap for the inline history we feed Codex
+DEFAULT_MAX_TURNS = int(_config_get("dialogue.default_max_turns", 3))
+MIN_MAX_TURNS = int(_config_get("dialogue.min_max_turns", 1))
+MAX_MAX_TURNS = int(_config_get("dialogue.max_max_turns", 20))
+MAX_HISTORY_BYTES = int(_config_get("dialogue.max_history_bytes", 8 * 1024))
 
 
 def _resolve_python() -> str:
@@ -280,7 +283,7 @@ def _invoke_wrapper_plan_review(
     except subprocess.TimeoutExpired:
         return {
             "status": "error",
-            "summary": "timeout do wrapper neste turno do diálogo",
+            "summary": t("dialogue.error.timeout"),
             "findings": [],
             "block_recommended": False,
             "severity": "low",
@@ -291,7 +294,7 @@ def _invoke_wrapper_plan_review(
     except json.JSONDecodeError:
         return {
             "status": "error",
-            "summary": "wrapper produziu JSON não parseável",
+            "summary": t("dialogue.error.unparseable"),
             "findings": [],
             "block_recommended": False,
             "severity": "low",
@@ -299,7 +302,7 @@ def _invoke_wrapper_plan_review(
     if not isinstance(data, dict):
         return {
             "status": "error",
-            "summary": "wrapper retornou JSON que não é um objeto",
+            "summary": t("dialogue.error.not_object"),
             "findings": [],
             "block_recommended": False,
             "severity": "low",
@@ -314,9 +317,7 @@ def cmd_start(args: argparse.Namespace) -> int:
         _emit({
             "status": "error",
             "reason": "needs_user_acceptance",
-            "hint": "Pergunte ao usuário se ele quer rodar plan-review-iter "
-                    "antes de chamar `start`. Só passe --accepted-by-user "
-                    "depois de uma confirmação explícita.",
+            "hint": t("dialogue.hint.needs_acceptance"),
         })
         return 0
     plan_path = Path(args.plan_file)
@@ -534,52 +535,33 @@ def cmd_finish(args: argparse.Namespace) -> int:
 # --------------------------------------------------------------- main
 
 def _parse_cli(argv: Optional[List[str]] = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Runner do diálogo iterativo (multi-jogada) "
-                    "Claude ↔ Codex para revisão de planos.",
-    )
+    parser = argparse.ArgumentParser(description=t("dialogue.cli.description"))
     sub = parser.add_subparsers(dest="subcommand", required=True)
 
-    p_start = sub.add_parser(
-        "start",
-        help="inicializa um diálogo iterativo (requer --accepted-by-user).",
-    )
+    p_start = sub.add_parser("start", help=t("dialogue.cli.help.start"))
     p_start.add_argument("--plan-file", required=True)
     p_start.add_argument("--cwd", default=None)
-    p_start.add_argument("--max-turns", type=int, default=None,
-                         help=f"sobrescreve o número máximo de turnos "
-                              f"(default {DEFAULT_MAX_TURNS}, env "
-                              "CODEX_DIALOGUE_MAX_TURNS, range 1-20).")
+    p_start.add_argument(
+        "--max-turns", type=int, default=None,
+        help=t("dialogue.cli.help.max_turns",
+               default=DEFAULT_MAX_TURNS, min=MIN_MAX_TURNS, max=MAX_MAX_TURNS),
+    )
     p_start.add_argument(
         "--accepted-by-user", action="store_true",
-        help="OBRIGATÓRIO: marca que o usuário já aceitou explicitamente "
-             "rodar o diálogo iterativo. Sem essa flag, o `start` recusa "
-             "para evitar disparar uma revisão Codex antes da aprovação.",
+        help=t("dialogue.cli.help.accepted_by_user"),
     )
 
-    p_next = sub.add_parser(
-        "next-turn",
-        help="envia um plano revisado para o próximo turno do diálogo.",
-    )
+    p_next = sub.add_parser("next-turn", help=t("dialogue.cli.help.next_turn"))
     p_next.add_argument("--dialogue-id", required=True)
     p_next.add_argument("--plan-file", required=True)
 
-    p_status = sub.add_parser(
-        "status",
-        help="inspeciona o estado atual do diálogo (turno, sinal de parada).",
-    )
+    p_status = sub.add_parser("status", help=t("dialogue.cli.help.status"))
     p_status.add_argument("--dialogue-id", required=True)
 
-    p_abort = sub.add_parser(
-        "abort",
-        help="marca o diálogo como abortado pelo usuário.",
-    )
+    p_abort = sub.add_parser("abort", help=t("dialogue.cli.help.abort"))
     p_abort.add_argument("--dialogue-id", required=True)
 
-    p_finish = sub.add_parser(
-        "finish",
-        help="consolida os artefatos do diálogo (final_plan.md + dialogue_log.md).",
-    )
+    p_finish = sub.add_parser("finish", help=t("dialogue.cli.help.finish"))
     p_finish.add_argument("--dialogue-id", required=True)
 
     return parser.parse_args(argv)

@@ -64,9 +64,12 @@ SKILL_DIR = BIN_DIR.parent
 WRAPPER = BIN_DIR / "invoke_codex_with_claude.py"
 CACHE_DIR = SKILL_DIR / "cache" / "bg_runs"
 
-DEFAULT_MAX_CONCURRENT = 5
-DEFAULT_CLEANUP_MAX_AGE_DAYS = 7
-LIST_DEFAULT_LIMIT = 50
+sys.path.insert(0, str(BIN_DIR))
+from codex_config import get as _config_get, t  # noqa: E402
+
+DEFAULT_MAX_CONCURRENT = int(_config_get("background.default_max_concurrent", 5))
+DEFAULT_CLEANUP_MAX_AGE_DAYS = int(_config_get("background.default_cleanup_max_age_days", 7))
+LIST_DEFAULT_LIMIT = int(_config_get("background.list_default_limit", 50))
 
 TERMINAL_STATUSES = ("done", "error", "cancelled")
 
@@ -461,38 +464,31 @@ def cmd_list(args: argparse.Namespace) -> int:
 # --------------------------------------------------------------------- main
 
 def _parse_cli(argv: Optional[List[str]] = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Runner em background para o wrapper "
-                    "invoke_codex_with_claude.py.",
-    )
+    parser = argparse.ArgumentParser(description=t("bg.cli.description"))
     sub = parser.add_subparsers(dest="subcommand", required=True)
 
-    p_start = sub.add_parser(
-        "start",
-        help="dispara uma run destacada do wrapper (não bloqueia a sessão).",
+    p_start = sub.add_parser("start", help=t("bg.cli.help.start"))
+    p_start.add_argument("mode", help=t("bg.cli.help.mode"))
+    p_start.add_argument("--cwd", default=None, help=t("bg.cli.help.cwd"))
+    p_start.add_argument(
+        "--max-concurrent", type=int, default=None,
+        help=t("bg.cli.help.max_concurrent", default=DEFAULT_MAX_CONCURRENT),
     )
-    p_start.add_argument("mode", help="modo do wrapper (plan-review|verify|ask|insight|delegate).")
-    p_start.add_argument("--cwd", default=None,
-                         help="cwd do wrapper (default: diretório corrente).")
-    p_start.add_argument("--max-concurrent", type=int, default=None,
-                         help=f"sobrescreve o limite de runs simultâneas "
-                              f"(default {DEFAULT_MAX_CONCURRENT}, env "
-                              "CODEX_BG_MAX_CONCURRENT).")
     # Wrapper-specific flags (--last-message-file, --task-file, --target-path,
     # --reasoning-effort, etc.) are forwarded as-is. We collect them via
     # parse_known_args below; using nargs=REMAINDER would otherwise eat our
     # own flags like --max-concurrent.
 
-    p_status = sub.add_parser("status", help="reporta o estado atual de uma run.")
+    p_status = sub.add_parser("status", help=t("bg.cli.help.status"))
     p_status.add_argument("run_id")
 
-    p_output = sub.add_parser("output", help="devolve o JSON canônico de uma run finalizada.")
+    p_output = sub.add_parser("output", help=t("bg.cli.help.output"))
     p_output.add_argument("run_id")
 
-    p_cancel = sub.add_parser("cancel", help="mata o subprocesso de uma run em execução.")
+    p_cancel = sub.add_parser("cancel", help=t("bg.cli.help.cancel"))
     p_cancel.add_argument("run_id")
 
-    p_list = sub.add_parser("list", help="lista runs ativas e recentes (ordenado por started_at desc).")
+    p_list = sub.add_parser("list", help=t("bg.cli.help.list"))
     p_list.add_argument("--limit", type=int, default=LIST_DEFAULT_LIMIT)
 
     args, unknown = parser.parse_known_args(argv)

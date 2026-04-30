@@ -64,44 +64,53 @@ SKILL_DIR = BIN_DIR.parent
 SCHEMA_FILE = BIN_DIR / "codex_output_schema.json"
 COLLECT_SCRIPT = BIN_DIR / "collect_claude_context.py"
 
+# Make sibling helpers importable before the module-level constants run, so
+# the config-driven defaults below can call ``_config_get`` directly.
+sys.path.insert(0, str(BIN_DIR))
+from codex_config import get as _config_get, t  # noqa: E402
+
 CACHE_DIR = SKILL_DIR / "cache"
 TELEMETRY_FILE = CACHE_DIR / "runs.jsonl"
 TELEMETRY_BACKUP = CACHE_DIR / "runs.jsonl.1"
-TELEMETRY_MAX_BYTES = 5 * 1024 * 1024
-TELEMETRY_SCHEMA_VERSION = 1
+TELEMETRY_MAX_BYTES = int(_config_get("wrapper.telemetry_max_bytes", 5 * 1024 * 1024))
+TELEMETRY_SCHEMA_VERSION = int(_config_get("wrapper.telemetry_schema_version", 1))
 
-DEFAULT_TIMEOUT_SECONDS = 120.0
+DEFAULT_TIMEOUT_SECONDS = float(_config_get("wrapper.default_timeout_seconds", 120.0))
 
 MODE_TIMEOUTS: Dict[str, float] = {
-    "ask":         120.0,
-    "verify":      180.0,
-    "plan-review": 300.0,
-    "delegate":    300.0,
-    "insight":     420.0,
+    k: float(v) for k, v in _config_get("wrapper.mode_timeouts", {
+        "ask":         120.0,
+        "verify":      180.0,
+        "plan-review": 300.0,
+        "delegate":    300.0,
+        "insight":     420.0,
+    }).items()
 }
 
-MODE_REASONING: Dict[str, str] = {
+MODE_REASONING: Dict[str, str] = dict(_config_get("wrapper.mode_reasoning", {
     "plan-review": "xhigh",
     "delegate":    "xhigh",
     "verify":      "medium",
     "ask":         "medium",
     "insight":     "xhigh",
-}
+}))
 
-VALID_REASONING_EFFORTS = ("low", "medium", "high", "xhigh")
+VALID_REASONING_EFFORTS = tuple(_config_get(
+    "wrapper.valid_reasoning_efforts",
+    ("low", "medium", "high", "xhigh"),
+))
 
 REVIEW_MODES = ("plan-review", "verify", "ask", "insight")
 ALL_MODES = ("plan-review", "verify", "delegate", "ask", "insight")
 
-HEARTBEAT_INTERVAL = 15.0
-HEARTBEAT_JITTER = 2.0
+HEARTBEAT_INTERVAL = float(_config_get("wrapper.heartbeat_interval_seconds", 15.0))
+HEARTBEAT_JITTER = float(_config_get("wrapper.heartbeat_jitter_seconds", 2.0))
 
 RETRY_INSTRUCTION = (
     "Your previous reply was not parseable as JSON. Reply ONLY with a single "
     "JSON object that matches the schema. No prose, no markdown fences."
 )
 
-sys.path.insert(0, str(BIN_DIR))
 from normalize_codex_result import normalize  # noqa: E402
 
 
@@ -430,7 +439,7 @@ def _run_codex_once(
         heartbeat.output_path = out_path
         cmd = _build_codex_command(mode, cwd, out_path, effort_override=effort_override)
         if not cmd:
-            return "", -1, "Codex CLI não disponível (override ausente ou não está no PATH)."
+            return "", -1, t("wrapper.error.codex_unavailable")
 
         try:
             proc = subprocess.Popen(
@@ -444,7 +453,7 @@ def _run_codex_once(
                 env=_codex_child_env(),
             )
         except (FileNotFoundError, OSError) as exc:
-            return "", -1, f"Não foi possível iniciar o processo do Codex: {exc.__class__.__name__}"
+            return "", -1, t("wrapper.error.process_start", exc=exc.__class__.__name__)
 
         heartbeat.set_phase("running")
         try:
@@ -460,9 +469,9 @@ def _run_codex_once(
                 proc.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 pass
-            return "", -1, f"Timeout do Codex após {timeout:.0f}s"
+            return "", -1, t("wrapper.error.timeout", timeout=timeout)
         except OSError as exc:
-            return "", -1, f"Erro de I/O no processo do Codex: {exc.__class__.__name__}"
+            return "", -1, t("wrapper.error.io", exc=exc.__class__.__name__)
 
         raw_output = ""
         try:
@@ -474,8 +483,8 @@ def _run_codex_once(
             raw_output = stdout or ""
 
         if proc.returncode != 0:
-            return raw_output, proc.returncode, (
-                f"Codex saiu com status diferente de zero ({proc.returncode})."
+            return raw_output, proc.returncode, t(
+                "wrapper.error.nonzero", code=proc.returncode,
             )
         heartbeat.set_phase("parsing")
         return raw_output, proc.returncode, None
@@ -497,8 +506,7 @@ def _wants_retry(mode: str, normalized: Dict[str, Any]) -> bool:
         return False
     if normalized.get("status") != "error":
         return False
-    summary = (normalized.get("summary") or "").lower()
-    return "não retornou json estruturado" in summary
+    return normalized.get("error_class") == "not_structured_json"
 
 
 def _best_effort_partial(mode: str, raw: str) -> Optional[Dict[str, Any]]:
@@ -699,12 +707,8 @@ def _write_telemetry(entry: Dict[str, Any]) -> None:
 # --------------------------------------------------------------- CLI
 
 def _parse_cli(argv: Optional[List[str]]) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Invoca o Codex CLI com o contexto coletado pelo Claude "
-                    "(CLAUDE.md, transcript, plano/diff/tarefa) e devolve "
-                    "JSON canônico em stdout.",
-    )
-    parser.add_argument("mode", choices=list(ALL_MODES), help="modo do wrapper.")
+    parser = argparse.ArgumentParser(description=t("wrapper.cli.description"))
+    parser.add_argument("mode", choices=list(ALL_MODES), help=t("wrapper.cli.help.mode"))
     parser.add_argument("--cwd", required=True)
     parser.add_argument("--target-path", default=None)
     parser.add_argument("--last-message-file", default=None)
@@ -713,18 +717,13 @@ def _parse_cli(argv: Optional[List[str]]) -> argparse.Namespace:
     parser.add_argument("--question-file", default=None)
     parser.add_argument("--focus-file", default=None)
     parser.add_argument("--review-packet-file", default=None,
-                        help="caminho de um review packet pré-montado (usado pelo plan-review).")
+                        help=t("wrapper.cli.help.review_packet_file"))
     parser.add_argument("--transcript-file", default=None)
     parser.add_argument("--transcript-jsonl-path", default=None)
     parser.add_argument(
         "--reasoning-effort",
         default=None,
-        help=(
-            "Sobrescreve o reasoning effort do modo. Valores aceitos: "
-            "low, medium, high, xhigh. Valores inválidos são ignorados "
-            "com warning no stderr (cai no default do modo). Use SOMENTE "
-            "quando o usuário pediu explicitamente."
-        ),
+        help=t("wrapper.cli.help.reasoning_effort"),
     )
     return parser.parse_args(argv)
 
@@ -741,8 +740,9 @@ def _resolve_effort_override(raw_value: Optional[str]) -> Optional[str]:
     if candidate in VALID_REASONING_EFFORTS:
         return candidate
     print(
-        f"[codex-wrapper] AVISO: ignorando --reasoning-effort inválido "
-        f"{raw_value!r}; valores válidos: {', '.join(VALID_REASONING_EFFORTS)}",
+        t("wrapper.warning.invalid_effort",
+          raw_value=repr(raw_value),
+          valid=", ".join(VALID_REASONING_EFFORTS)),
         file=sys.stderr,
         flush=True,
     )
@@ -842,7 +842,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         )
     except Exception as exc:  # wrapper must never raise
         error_class = exc.__class__.__name__
-        result = _generic_error(args.mode, started_at, f"Erro interno do wrapper: {error_class}")
+        result = _generic_error(args.mode, started_at, t("wrapper.error.internal", exc=error_class))
     finally:
         heartbeat.stop()
 

@@ -1,0 +1,170 @@
+{
+  "schema_version": 1,
+  "_doc": "Defaults da skill `codex`. Este arquivo é versionado. Para overrides locais (sem commitar), crie `config.local.json` na mesma pasta com as mesmas chaves; valores em `config.local.json` sobrescrevem este arquivo via deep-merge.",
+
+  "settings": {
+    "dialogue": {
+      "default_max_turns": 3,
+      "min_max_turns": 1,
+      "max_max_turns": 20,
+      "max_history_bytes": 8192
+    },
+    "background": {
+      "default_max_concurrent": 5,
+      "default_cleanup_max_age_days": 7,
+      "list_default_limit": 50
+    },
+    "wrapper": {
+      "default_timeout_seconds": 120,
+      "mode_timeouts": {
+        "ask": 120,
+        "verify": 180,
+        "plan-review": 300,
+        "delegate": 300,
+        "insight": 420
+      },
+      "mode_reasoning": {
+        "plan-review": "xhigh",
+        "delegate": "xhigh",
+        "verify": "medium",
+        "ask": "medium",
+        "insight": "xhigh"
+      },
+      "valid_reasoning_efforts": ["low", "medium", "high", "xhigh"],
+      "heartbeat_interval_seconds": 15.0,
+      "heartbeat_jitter_seconds": 2.0,
+      "telemetry_max_bytes": 5242880,
+      "telemetry_schema_version": 1
+    },
+    "complexity": {
+      "threshold_score": 3,
+      "size_threshold_bytes": 4096,
+      "distinct_files_threshold": 5,
+      "phases_threshold": 2,
+      "sensitive_keywords": [
+        "auth", "permission", "payment", "fiscal", "deploy",
+        "migration", "schema", "breaking", "rollback"
+      ],
+      "cross_module_dirs": [
+        "handler", "service", "repo", "api", "frontend", "backend"
+      ]
+    },
+    "batch": {
+      "default_max_parallel": 4,
+      "max_parallel_ceiling": 8,
+      "item_safety_timeout_seconds": 900
+    }
+  },
+
+  "locales": {
+    "pt-BR": {
+      "wrapper.cli.description": "Invoca o Codex CLI com o contexto coletado pelo Claude (CLAUDE.md, transcript, plano/diff/tarefa) e devolve JSON canônico em stdout.",
+      "wrapper.cli.help.mode": "modo do wrapper.",
+      "wrapper.cli.help.review_packet_file": "caminho de um review packet pré-montado (usado pelo plan-review).",
+      "wrapper.cli.help.reasoning_effort": "Sobrescreve o reasoning effort do modo. Valores aceitos: low, medium, high, xhigh. Valores inválidos são ignorados com warning no stderr (cai no default do modo). Use SOMENTE quando o usuário pediu explicitamente.",
+      "wrapper.warning.invalid_effort": "[codex-wrapper] AVISO: ignorando --reasoning-effort inválido {raw_value}; valores válidos: {valid}",
+      "wrapper.error.codex_unavailable": "Codex CLI não disponível (override ausente ou não está no PATH).",
+      "wrapper.error.process_start": "Não foi possível iniciar o processo do Codex: {exc}",
+      "wrapper.error.timeout": "Timeout do Codex após {timeout:.0f}s",
+      "wrapper.error.io": "Erro de I/O no processo do Codex: {exc}",
+      "wrapper.error.nonzero": "Codex saiu com status diferente de zero ({code}).",
+      "wrapper.error.internal": "Erro interno do wrapper: {exc}",
+
+      "normalize.summary.not_structured": "Codex não retornou JSON estruturado no modo de review. Output cru preservado.",
+
+      "dialogue.cli.description": "Runner do diálogo iterativo (multi-jogada) Claude ↔ Codex para revisão de planos.",
+      "dialogue.cli.help.start": "inicializa um diálogo iterativo (requer --accepted-by-user).",
+      "dialogue.cli.help.next_turn": "envia um plano revisado para o próximo turno do diálogo.",
+      "dialogue.cli.help.status": "inspeciona o estado atual do diálogo (turno, sinal de parada).",
+      "dialogue.cli.help.abort": "marca o diálogo como abortado pelo usuário.",
+      "dialogue.cli.help.finish": "consolida os artefatos do diálogo (final_plan.md + dialogue_log.md).",
+      "dialogue.cli.help.max_turns": "sobrescreve o número máximo de turnos (default {default}, env CODEX_DIALOGUE_MAX_TURNS, range {min}-{max}).",
+      "dialogue.cli.help.accepted_by_user": "OBRIGATÓRIO: marca que o usuário já aceitou explicitamente rodar o diálogo iterativo. Sem essa flag, o `start` recusa para evitar disparar uma revisão Codex antes da aprovação.",
+      "dialogue.error.timeout": "timeout do wrapper neste turno do diálogo",
+      "dialogue.error.unparseable": "wrapper produziu JSON não parseável",
+      "dialogue.error.not_object": "wrapper retornou JSON que não é um objeto",
+      "dialogue.hint.needs_acceptance": "Pergunte ao usuário se ele quer rodar plan-review-iter antes de chamar `start`. Só passe --accepted-by-user depois de uma confirmação explícita.",
+
+      "bg.cli.description": "Runner em background para o wrapper invoke_codex_with_claude.py.",
+      "bg.cli.help.start": "dispara uma run destacada do wrapper (não bloqueia a sessão).",
+      "bg.cli.help.mode": "modo do wrapper (plan-review|verify|ask|insight|delegate).",
+      "bg.cli.help.cwd": "cwd do wrapper (default: diretório corrente).",
+      "bg.cli.help.max_concurrent": "sobrescreve o limite de runs simultâneas (default {default}, env CODEX_BG_MAX_CONCURRENT).",
+      "bg.cli.help.status": "reporta o estado atual de uma run.",
+      "bg.cli.help.output": "devolve o JSON canônico de uma run finalizada.",
+      "bg.cli.help.cancel": "mata o subprocesso de uma run em execução.",
+      "bg.cli.help.list": "lista runs ativas e recentes (ordenado por started_at desc).",
+
+      "complexity.cli.description": "Pontua a complexidade de um plano para decidir se vale sugerir o modo iterativo (plan-review-iter) em vez do plan-review one-shot.",
+      "complexity.cli.help.plan_file": "Caminho do arquivo markdown do plano.",
+      "complexity.cli.help.cwd": "Reservado para uso futuro (sinais cross-module podem se tornar project-aware). Hoje é ignorado.",
+      "complexity.error.file_not_found": "arquivo de plano não encontrado: {path}",
+      "complexity.error.read_failure": "não foi possível ler o plano: {exc}",
+      "complexity.error.internal": "erro_interno: {exc}",
+
+      "batch.cli.description": "Roda um batch do Codex (batch-ask read-only ou batch-delegate com write-set declarado).",
+      "batch.cli.help.sub_mode": "sub-modo do batch (read-only ou delegate com write-set).",
+      "batch.cli.help.input_file": "caminho do arquivo JSON com o payload do batch.",
+      "batch.summary.timeout": "Item do batch excedeu o teto de segurança de {timeout}s.",
+      "batch.summary.no_tasks": "Input do batch não tem tarefas.",
+      "batch.summary.overlap": "Write-sets sobrepostos; recusando rodar batch-delegate.",
+      "batch.summary.worker_crash": "Worker do batch falhou: {exc}",
+      "batch.summary.read_failure": "Não foi possível ler o input do batch: {exc}"
+    },
+
+    "en-US": {
+      "wrapper.cli.description": "Invoke the Codex CLI with Claude-provided context (CLAUDE.md, transcript, plan/diff/task) and emit canonical JSON on stdout.",
+      "wrapper.cli.help.mode": "wrapper mode.",
+      "wrapper.cli.help.review_packet_file": "path to a pre-built review packet (used by plan-review).",
+      "wrapper.cli.help.reasoning_effort": "Override the per-mode reasoning effort. Accepted values: low, medium, high, xhigh. Invalid values are ignored with a warning to stderr (the per-mode default is used instead). Should be set ONLY when the user explicitly asked for it.",
+      "wrapper.warning.invalid_effort": "[codex-wrapper] WARN: ignoring invalid --reasoning-effort {raw_value}; valid values: {valid}",
+      "wrapper.error.codex_unavailable": "Codex CLI not available (override missing or not on PATH).",
+      "wrapper.error.process_start": "Could not start Codex process: {exc}",
+      "wrapper.error.timeout": "Codex timeout after {timeout:.0f}s",
+      "wrapper.error.io": "Codex process I/O error: {exc}",
+      "wrapper.error.nonzero": "Codex exited with non-zero status ({code}).",
+      "wrapper.error.internal": "Wrapper internal error: {exc}",
+
+      "normalize.summary.not_structured": "Codex did not return structured JSON for review mode. Raw output preserved.",
+
+      "dialogue.cli.description": "Iterative multi-turn plan-review dialogue runner (Claude <-> Codex).",
+      "dialogue.cli.help.start": "initialise an iterative dialogue (requires --accepted-by-user).",
+      "dialogue.cli.help.next_turn": "submit a revised plan for the next turn.",
+      "dialogue.cli.help.status": "inspect dialogue state (turn, stop signal).",
+      "dialogue.cli.help.abort": "mark dialogue as aborted by the user.",
+      "dialogue.cli.help.finish": "consolidate dialogue artefacts (final_plan.md + dialogue_log.md).",
+      "dialogue.cli.help.max_turns": "override max turns (default {default}, env CODEX_DIALOGUE_MAX_TURNS, range {min}-{max}).",
+      "dialogue.cli.help.accepted_by_user": "REQUIRED: marks that the user has explicitly accepted to run the iterative dialogue. Without this flag, `start` refuses to avoid triggering a Codex review before approval.",
+      "dialogue.error.timeout": "wrapper timeout in this dialogue turn",
+      "dialogue.error.unparseable": "wrapper produced unparseable JSON",
+      "dialogue.error.not_object": "wrapper returned JSON that is not an object",
+      "dialogue.hint.needs_acceptance": "Ask the user whether they want to run plan-review-iter before calling `start`. Only pass --accepted-by-user after an explicit confirmation.",
+
+      "bg.cli.description": "Background runner for the invoke_codex_with_claude.py wrapper.",
+      "bg.cli.help.start": "spawn a detached wrapper run (non-blocking).",
+      "bg.cli.help.mode": "wrapper mode (plan-review|verify|ask|insight|delegate).",
+      "bg.cli.help.cwd": "wrapper cwd (default: current directory).",
+      "bg.cli.help.max_concurrent": "override the concurrent runs limit (default {default}, env CODEX_BG_MAX_CONCURRENT).",
+      "bg.cli.help.status": "report the current state of a run.",
+      "bg.cli.help.output": "return the canonical JSON of a finished run.",
+      "bg.cli.help.cancel": "kill the subprocess of a running run.",
+      "bg.cli.help.list": "list active and recent runs (ordered by started_at desc).",
+
+      "complexity.cli.description": "Score plan complexity to decide whether to suggest the iterative mode (plan-review-iter) over the one-shot plan-review.",
+      "complexity.cli.help.plan_file": "Path to the plan markdown file.",
+      "complexity.cli.help.cwd": "Reserved for future use (cross-module signals could grow project-aware). Currently ignored.",
+      "complexity.error.file_not_found": "plan file not found: {path}",
+      "complexity.error.read_failure": "could not read plan: {exc}",
+      "complexity.error.internal": "internal_error: {exc}",
+
+      "batch.cli.description": "Run a Codex batch (batch-ask read-only or batch-delegate with declared write-set).",
+      "batch.cli.help.sub_mode": "batch sub-mode (read-only or delegate with write-set).",
+      "batch.cli.help.input_file": "path to the JSON file with the batch payload.",
+      "batch.summary.timeout": "Batch item exceeded the {timeout}s safety ceiling.",
+      "batch.summary.no_tasks": "Batch input has no tasks.",
+      "batch.summary.overlap": "Write-sets overlap; refusing to run batch-delegate.",
+      "batch.summary.worker_crash": "Batch worker crashed: {exc}",
+      "batch.summary.read_failure": "Could not read batch input: {exc}"
+    }
+  }
+}

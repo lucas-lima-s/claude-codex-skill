@@ -26,7 +26,12 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import sys
+from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from codex_config import t  # noqa: E402
 
 SEVERITY_VALUES = ("low", "medium", "high")
 CONFIDENCE_VALUES = ("low", "medium", "high")
@@ -142,9 +147,8 @@ def normalize(raw: str, mode: str) -> Dict[str, Any]:
             result["summary"] = raw.strip()
             return result
         result["status"] = "error"
-        result["summary"] = (
-            "Codex não retornou JSON estruturado no modo de review. Output cru preservado."
-        )
+        result["error_class"] = "not_structured_json"
+        result["summary"] = t("normalize.summary.not_structured")
         return result
 
     result["severity"] = _clamp_enum(data.get("severity"), SEVERITY_VALUES, "low")

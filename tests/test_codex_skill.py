@@ -644,6 +644,89 @@ def test_ps1_stub(r: Runner) -> None:
         r.eq(data.get("status"), "ok", "ps1 stub forwards args to wrapper")
 
 
+def test_codex_config(r: Runner) -> None:
+    r.section("codex_config × get/t/detect_locale + override config.local")
+    sys.path.insert(0, str(SCRIPTS))
+    try:
+        import codex_config as cc
+    except ImportError as exc:
+        r.fail("codex_config import", str(exc))
+        return
+
+    # Snapshot env so we don't leak CODEX_LOCALE between subtests.
+    saved_locale = os.environ.pop("CODEX_LOCALE", None)
+    try:
+        # get() — settings core
+        cc.clear_cache()
+        r.eq(cc.get("dialogue.default_max_turns"), 3,
+             "get(dialogue.default_max_turns) == 3")
+        r.eq(cc.get("background.default_max_concurrent"), 5,
+             "get(background.default_max_concurrent) == 5")
+        r.eq(cc.get("foo.bar.does.not.exist", default="N/A"), "N/A",
+             "get(missing) returns default")
+
+        # t() — pt-BR direto
+        os.environ["CODEX_LOCALE"] = "pt-BR"
+        cc.clear_cache()
+        r.in_("não retornou JSON estruturado",
+              cc.t("normalize.summary.not_structured"),
+              "t pt-BR resolves normalize key")
+        r.in_("Timeout", cc.t("wrapper.error.timeout", timeout=30.0),
+              "t pt-BR resolves with kwargs")
+
+        # t() — en-US direto
+        os.environ["CODEX_LOCALE"] = "en-US"
+        cc.clear_cache()
+        r.in_("did not return structured JSON",
+              cc.t("normalize.summary.not_structured"),
+              "t en-US resolves normalize key")
+        r.in_("Codex timeout after",
+              cc.t("wrapper.error.timeout", timeout=30.0),
+              "t en-US resolves with kwargs")
+
+        # t() — chave inexistente cai no literal
+        cc.clear_cache()
+        r.eq(cc.t("foo.bar.baz"), "foo.bar.baz",
+             "t missing key falls back to literal key")
+
+        # detect_locale com env var
+        os.environ["CODEX_LOCALE"] = "pt_BR"  # underscore
+        cc.clear_cache()
+        r.eq(cc.detect_locale(), "pt-BR",
+             "detect_locale normalises pt_BR → pt-BR")
+
+        # override via config.local.json
+        os.environ.pop("CODEX_LOCALE", None)
+        local_path = SKILL_DIR / "config.local.json"
+        local_existed = local_path.exists()
+        backup = local_path.read_text(encoding="utf-8") if local_existed else None
+        try:
+            local_path.write_text(json.dumps({
+                "settings": {"dialogue": {"default_max_turns": 999}},
+                "locales": {"pt-BR": {"foo.test": "VALOR LOCAL pt-BR"}},
+            }), encoding="utf-8")
+            cc.clear_cache()
+            r.eq(cc.get("dialogue.default_max_turns"), 999,
+                 "config.local.json override settings")
+            os.environ["CODEX_LOCALE"] = "pt-BR"
+            cc.clear_cache()
+            r.eq(cc.t("foo.test"), "VALOR LOCAL pt-BR",
+                 "config.local.json adds locale entries")
+            # Chave existente no default + override deve mostrar override
+            os.environ["CODEX_LOCALE"] = "pt-BR"
+        finally:
+            if local_existed and backup is not None:
+                local_path.write_text(backup, encoding="utf-8")
+            else:
+                local_path.unlink(missing_ok=True)
+            cc.clear_cache()
+    finally:
+        os.environ.pop("CODEX_LOCALE", None)
+        if saved_locale is not None:
+            os.environ["CODEX_LOCALE"] = saved_locale
+        cc.clear_cache()
+
+
 def test_disable_heartbeat_silent(r: Runner) -> None:
     r.section("heartbeat × CODEX_WRAPPER_DISABLE_HEARTBEAT=1 silencia stderr")
     with _tempdir() as tmp:
@@ -959,6 +1042,7 @@ def main() -> int:
     test_ps1_stub(r)
     test_disable_heartbeat_silent(r)
     test_reasoning_effort_override(r)
+    test_codex_config(r)
     test_analyze_plan_complexity(r)
     test_dialogue_lifecycle(r)
 

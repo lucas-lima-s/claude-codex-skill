@@ -24,6 +24,7 @@ Ponte Claude Code → Codex CLI. Único ponto de entrada para automação.
 | `CODEX_WRAPPER_TELEMETRY_DISABLED` | Quando `1`, não grava em `cache/runs.jsonl`. |
 | `CODEX_BG_MAX_CONCURRENT` | Limite de runs simultâneas em background (default 5). Override via `--max-concurrent N` no `codex_bg.py start`. |
 | `CODEX_DIALOGUE_MAX_TURNS` | Default de turnos no `codex_dialogue.py start` (default 3, range 1-20). Override via `--max-turns N`. |
+| `CODEX_LOCALE` | Idioma das mensagens user-facing (`pt-BR` ou `en-US`). Default: detectado pelo sistema (`locale.getdefaultlocale()`), com fallback para `pt-BR`. |
 
 ## Estrutura
 
@@ -42,12 +43,36 @@ Ponte Claude Code → Codex CLI. Único ponto de entrada para automação.
     codex_bg.py                  — runner assíncrono (start/status/output/cancel/list)
     codex_dialogue.py            — diálogo iterativo multi-jogada (start/next-turn/finish/abort/status)
     analyze_plan_complexity.py   — heurística para auto-sugerir plan-review-iter
+    codex_config.py              — config centralizada + i18n (get/t/detect_locale)
     codex_output_schema.json     — JSON Schema usado em `--output-schema`
+  config.default.json            — settings + locales versionados
+  config.local.json              — override do usuário (gitignored, opcional)
   cache/
     runs.jsonl                   — telemetria (rotaciona aos 5 MB para .1)
   tests/
     fake_codex.py                — Codex falso parametrizável para testes
 ```
+
+## Configuração e i18n
+
+A skill carrega settings + locales de `config.default.json` (versionado) e
+aplica deep-merge de `config.local.json` (gitignored, opcional) por cima.
+Helpers em `scripts/codex_config.py`:
+
+- `get("dialogue.default_max_turns", 3)` — lookup com dotted-path em
+  `settings.*`.
+- `t("wrapper.error.timeout", timeout=30)` — tradução com fallback
+  pt-BR → chave literal e suporte a `{kwargs}`.
+- `detect_locale()` — `CODEX_LOCALE` env > `locale.getdefaultlocale()` >
+  `pt-BR`. Códigos com underscore (`pt_BR`) viram hífen (`pt-BR`).
+
+**Para customizar**: copie campos de `config.default.json` para um novo
+`config.local.json`. Apenas as chaves presentes no override são
+sobrescritas (deep-merge).
+
+Idiomas suportados out-of-the-box: `pt-BR` (default) e `en-US`. Para
+adicionar um novo locale, basta adicionar uma seção `locales.<código>`
+no `config.local.json` (ou propor PR pra entrar no default).
 
 ## Modos
 
