@@ -127,7 +127,7 @@ def _score_plan(plan_path: Path) -> Tuple[int, List[str]]:
         text = plan_path.read_text(encoding="utf-8", errors="replace")
     except (OSError, UnicodeDecodeError) as exc:
         # Surface as exception caller treats as "soft failure"
-        raise RuntimeError(f"could not read plan: {exc.__class__.__name__}") from exc
+        raise RuntimeError(f"não foi possível ler o plano: {exc.__class__.__name__}") from exc
 
     try:
         size_bytes = plan_path.stat().st_size
@@ -168,18 +168,20 @@ def _score_plan(plan_path: Path) -> Tuple[int, List[str]]:
 
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Score plan complexity to decide whether to suggest plan-review-iter.",
+        description="Pontua a complexidade de um plano para decidir se vale "
+                    "sugerir o modo iterativo (plan-review-iter) em vez do "
+                    "plan-review one-shot.",
     )
     parser.add_argument("--plan-file", required=True,
-                        help="Path to the plan markdown file.")
+                        help="Caminho do arquivo markdown do plano.")
     parser.add_argument("--cwd", default=None,
-                        help="Reserved for future use (cross-module signals "
-                             "could grow project-aware). Currently ignored.")
+                        help="Reservado para uso futuro (sinais cross-module "
+                             "podem se tornar project-aware). Hoje é ignorado.")
     args = parser.parse_args(argv)
 
     plan_path = Path(args.plan_file)
     if not plan_path.is_file():
-        _emit(_safe_failure(f"plan file not found: {plan_path}"))
+        _emit(_safe_failure(f"arquivo de plano não encontrado: {plan_path}"))
         return 0
 
     try:
@@ -188,7 +190,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         _emit(_safe_failure(str(exc)))
         return 0
     except Exception as exc:  # never raise out of CLI
-        _emit(_safe_failure(f"internal_error: {exc.__class__.__name__}"))
+        _emit(_safe_failure(f"erro_interno: {exc.__class__.__name__}"))
         return 0
 
     _emit({

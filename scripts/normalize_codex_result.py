@@ -143,7 +143,7 @@ def normalize(raw: str, mode: str) -> Dict[str, Any]:
             return result
         result["status"] = "error"
         result["summary"] = (
-            "Codex did not return structured JSON for review mode. Raw output preserved."
+            "Codex não retornou JSON estruturado no modo de review. Output cru preservado."
         )
         return result
 

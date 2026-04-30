@@ -166,7 +166,7 @@ def _run_wrapper(
         except subprocess.TimeoutExpired:
             return task_id, {
                 "status": "error",
-                "summary": "Batch item exceeded the 900s safety ceiling.",
+                "summary": "Item do batch excedeu o teto de segurança de 900s.",
                 "duration_seconds": time.monotonic() - started,
                 "result": {},
             }
@@ -207,7 +207,7 @@ def _run_batch(sub_mode: str, batch: Dict[str, Any]) -> Dict[str, Any]:
     if not isinstance(tasks, list) or not tasks:
         return {
             "status": "error",
-            "summary": "Batch input has no tasks.",
+            "summary": "Input do batch não tem tarefas.",
             "items": [],
         }
 
@@ -216,7 +216,7 @@ def _run_batch(sub_mode: str, batch: Dict[str, Any]) -> Dict[str, Any]:
         if overlaps:
             return {
                 "status": "error",
-                "summary": "Write-sets overlap; refusing to run batch-delegate.",
+                "summary": "Write-sets sobrepostos; recusando rodar batch-delegate.",
                 "overlaps": overlaps,
                 "items": [],
             }
@@ -240,7 +240,7 @@ def _run_batch(sub_mode: str, batch: Dict[str, Any]) -> Dict[str, Any]:
                 task_id = str(task.get("id") or "?")
                 item = {
                     "status": "error",
-                    "summary": f"Batch worker crashed: {exc.__class__.__name__}",
+                    "summary": f"Worker do batch falhou: {exc.__class__.__name__}",
                     "duration_seconds": 0.0,
                     "result": {},
                 }
@@ -279,14 +279,17 @@ def _run_batch(sub_mode: str, batch: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def main(argv: Optional[List[str]] = None) -> int:
-    parser = argparse.ArgumentParser(description="Run a Codex batch.")
+    parser = argparse.ArgumentParser(
+        description="Roda um batch do Codex (batch-ask read-only ou "
+                    "batch-delegate com write-set declarado).",
+    )
     parser.add_argument(
         "sub_mode",
         choices=["batch-ask", "batch-delegate"],
-        help="batch sub-mode",
+        help="sub-modo do batch (read-only ou delegate com write-set).",
     )
     parser.add_argument("--input-file", required=True,
-                        help="Path to a JSON file with the batch payload.")
+                        help="caminho do arquivo JSON com o payload do batch.")
     args = parser.parse_args(argv)
 
     try:
@@ -294,7 +297,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     except (OSError, json.JSONDecodeError) as exc:
         print(json.dumps({
             "status": "error",
-            "summary": f"Could not read batch input: {exc.__class__.__name__}",
+            "summary": f"Não foi possível ler o input do batch: {exc.__class__.__name__}",
         }, ensure_ascii=False))
         return 0
 

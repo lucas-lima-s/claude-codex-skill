@@ -172,8 +172,8 @@ def test_plan_review_modes(r: Runner) -> None:
         # invalid_json → retry → still error after retry
         result, _, _ = _run_wrapper("plan-review", "invalid_json", common)
         r.eq(result.get("status"), "error", "plan-review/invalid_json status=error")
-        r.in_("structured json", (result.get("summary") or "").lower(),
-              "plan-review/invalid_json summary mentions JSON")
+        r.in_("json estruturado", (result.get("summary") or "").lower(),
+              "plan-review/invalid_json summary menciona JSON")
 
         # partial → degraded best-effort
         result, _, _ = _run_wrapper("plan-review", "partial", common)
@@ -183,8 +183,8 @@ def test_plan_review_modes(r: Runner) -> None:
         # nonzero exit
         result, _, _ = _run_wrapper("plan-review", "nonzero", common)
         r.eq(result.get("status"), "error", "plan-review/nonzero status=error")
-        r.in_("non-zero status (2)", result.get("summary", ""),
-              "plan-review/nonzero summary mentions exit 2")
+        r.in_("status diferente de zero (2)", result.get("summary", ""),
+              "plan-review/nonzero summary menciona exit 2")
 
         # needs_input
         result, _, _ = _run_wrapper("plan-review", "needs_input", common)

@@ -280,7 +280,7 @@ def _invoke_wrapper_plan_review(
     except subprocess.TimeoutExpired:
         return {
             "status": "error",
-            "summary": "wrapper timeout in dialogue turn",
+            "summary": "timeout do wrapper neste turno do diálogo",
             "findings": [],
             "block_recommended": False,
             "severity": "low",
@@ -291,7 +291,7 @@ def _invoke_wrapper_plan_review(
     except json.JSONDecodeError:
         return {
             "status": "error",
-            "summary": "wrapper produced unparseable JSON",
+            "summary": "wrapper produziu JSON não parseável",
             "findings": [],
             "block_recommended": False,
             "severity": "low",
@@ -299,7 +299,7 @@ def _invoke_wrapper_plan_review(
     if not isinstance(data, dict):
         return {
             "status": "error",
-            "summary": "wrapper returned non-object JSON",
+            "summary": "wrapper retornou JSON que não é um objeto",
             "findings": [],
             "block_recommended": False,
             "severity": "low",
@@ -535,7 +535,8 @@ def cmd_finish(args: argparse.Namespace) -> int:
 
 def _parse_cli(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Iterative multi-turn plan-review dialogue runner.",
+        description="Runner do diálogo iterativo (multi-jogada) "
+                    "Claude ↔ Codex para revisão de planos.",
     )
     sub = parser.add_subparsers(dest="subcommand", required=True)
 
@@ -556,17 +557,29 @@ def _parse_cli(argv: Optional[List[str]] = None) -> argparse.Namespace:
              "para evitar disparar uma revisão Codex antes da aprovação.",
     )
 
-    p_next = sub.add_parser("next-turn", help="submit a revised plan for the next turn")
+    p_next = sub.add_parser(
+        "next-turn",
+        help="envia um plano revisado para o próximo turno do diálogo.",
+    )
     p_next.add_argument("--dialogue-id", required=True)
     p_next.add_argument("--plan-file", required=True)
 
-    p_status = sub.add_parser("status", help="inspect dialogue state")
+    p_status = sub.add_parser(
+        "status",
+        help="inspeciona o estado atual do diálogo (turno, sinal de parada).",
+    )
     p_status.add_argument("--dialogue-id", required=True)
 
-    p_abort = sub.add_parser("abort", help="mark dialogue as aborted")
+    p_abort = sub.add_parser(
+        "abort",
+        help="marca o diálogo como abortado pelo usuário.",
+    )
     p_abort.add_argument("--dialogue-id", required=True)
 
-    p_finish = sub.add_parser("finish", help="consolidate dialogue artefacts")
+    p_finish = sub.add_parser(
+        "finish",
+        help="consolida os artefatos do diálogo (final_plan.md + dialogue_log.md).",
+    )
     p_finish.add_argument("--dialogue-id", required=True)
 
     return parser.parse_args(argv)

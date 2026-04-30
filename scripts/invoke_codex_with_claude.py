@@ -430,7 +430,7 @@ def _run_codex_once(
         heartbeat.output_path = out_path
         cmd = _build_codex_command(mode, cwd, out_path, effort_override=effort_override)
         if not cmd:
-            return "", -1, "Codex CLI not available (override missing or not on PATH)."
+            return "", -1, "Codex CLI não disponível (override ausente ou não está no PATH)."
 
         try:
             proc = subprocess.Popen(
@@ -444,7 +444,7 @@ def _run_codex_once(
                 env=_codex_child_env(),
             )
         except (FileNotFoundError, OSError) as exc:
-            return "", -1, f"Codex process could not be started: {exc.__class__.__name__}"
+            return "", -1, f"Não foi possível iniciar o processo do Codex: {exc.__class__.__name__}"
 
         heartbeat.set_phase("running")
         try:
@@ -460,9 +460,9 @@ def _run_codex_once(
                 proc.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 pass
-            return "", -1, f"Codex timeout after {timeout:.0f}s"
+            return "", -1, f"Timeout do Codex após {timeout:.0f}s"
         except OSError as exc:
-            return "", -1, f"Codex process I/O error: {exc.__class__.__name__}"
+            return "", -1, f"Erro de I/O no processo do Codex: {exc.__class__.__name__}"
 
         raw_output = ""
         try:
@@ -475,7 +475,7 @@ def _run_codex_once(
 
         if proc.returncode != 0:
             return raw_output, proc.returncode, (
-                f"Codex exited with non-zero status ({proc.returncode})."
+                f"Codex saiu com status diferente de zero ({proc.returncode})."
             )
         heartbeat.set_phase("parsing")
         return raw_output, proc.returncode, None
@@ -498,7 +498,7 @@ def _wants_retry(mode: str, normalized: Dict[str, Any]) -> bool:
     if normalized.get("status") != "error":
         return False
     summary = (normalized.get("summary") or "").lower()
-    return "did not return structured json" in summary
+    return "não retornou json estruturado" in summary
 
 
 def _best_effort_partial(mode: str, raw: str) -> Optional[Dict[str, Any]]:
@@ -699,8 +699,12 @@ def _write_telemetry(entry: Dict[str, Any]) -> None:
 # --------------------------------------------------------------- CLI
 
 def _parse_cli(argv: Optional[List[str]]) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Invoke Codex with Claude-provided context.")
-    parser.add_argument("mode", choices=list(ALL_MODES), help="wrapper mode")
+    parser = argparse.ArgumentParser(
+        description="Invoca o Codex CLI com o contexto coletado pelo Claude "
+                    "(CLAUDE.md, transcript, plano/diff/tarefa) e devolve "
+                    "JSON canônico em stdout.",
+    )
+    parser.add_argument("mode", choices=list(ALL_MODES), help="modo do wrapper.")
     parser.add_argument("--cwd", required=True)
     parser.add_argument("--target-path", default=None)
     parser.add_argument("--last-message-file", default=None)
@@ -709,17 +713,17 @@ def _parse_cli(argv: Optional[List[str]]) -> argparse.Namespace:
     parser.add_argument("--question-file", default=None)
     parser.add_argument("--focus-file", default=None)
     parser.add_argument("--review-packet-file", default=None,
-                        help="Path to a pre-built review packet (used by plan-review).")
+                        help="caminho de um review packet pré-montado (usado pelo plan-review).")
     parser.add_argument("--transcript-file", default=None)
     parser.add_argument("--transcript-jsonl-path", default=None)
     parser.add_argument(
         "--reasoning-effort",
         default=None,
         help=(
-            "Override the per-mode reasoning effort. Accepted values: "
-            "low, medium, high, xhigh. Invalid values are ignored with a "
-            "warning to stderr (the per-mode default is used instead). "
-            "Should be set ONLY when the user explicitly asked for it."
+            "Sobrescreve o reasoning effort do modo. Valores aceitos: "
+            "low, medium, high, xhigh. Valores inválidos são ignorados "
+            "com warning no stderr (cai no default do modo). Use SOMENTE "
+            "quando o usuário pediu explicitamente."
         ),
     )
     return parser.parse_args(argv)
@@ -737,8 +741,8 @@ def _resolve_effort_override(raw_value: Optional[str]) -> Optional[str]:
     if candidate in VALID_REASONING_EFFORTS:
         return candidate
     print(
-        f"[codex-wrapper] WARN: ignoring invalid --reasoning-effort "
-        f"{raw_value!r}; valid values: {', '.join(VALID_REASONING_EFFORTS)}",
+        f"[codex-wrapper] AVISO: ignorando --reasoning-effort inválido "
+        f"{raw_value!r}; valores válidos: {', '.join(VALID_REASONING_EFFORTS)}",
         file=sys.stderr,
         flush=True,
     )
@@ -838,7 +842,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         )
     except Exception as exc:  # wrapper must never raise
         error_class = exc.__class__.__name__
-        result = _generic_error(args.mode, started_at, f"Wrapper internal error: {error_class}")
+        result = _generic_error(args.mode, started_at, f"Erro interno do wrapper: {error_class}")
     finally:
         heartbeat.stop()
 
