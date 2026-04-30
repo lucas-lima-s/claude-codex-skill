@@ -1,7 +1,7 @@
 ---
 name: codex
 description: Delegar ao Codex uma das cinco operações — revisar um plano (plan-review), verificar uma implementação por git diff (verify), responder pergunta/opinião (ask), fazer retrospectiva holística da sessão (insight) ou executar uma tarefa (delegate). Use SEMPRE que o usuário disser qualquer uma destas frases (ou equivalentes naturais em pt-BR "revise esse plano com o codex", "revisa esse plano pelo codex", "pede pro codex revisar isso", "implemente esse plano com o codex", "manda o codex fazer", "delega ao codex", "pergunte ao codex o que ele acha", "pergunta pro codex sobre", "manda isso pro codex", "segunda opinião do codex", "verifica minha implementação com o codex", "pede pro codex olhar o que eu fiz", "faz um insight da sessão", "analisa o que a gente fez", "retrospectiva pelo codex", "o que a gente poderia ter feito"). A skill é o ÚNICO ponto de entrada para invocar o Codex automaticamente — não use o plugin /codex:*. Para o modo `delegate`, SEMPRE confirmar com o usuário antes de rodar porque o Codex roda com `--sandbox danger-full-access` e pode editar/deletar arquivos dentro ou fora do workspace.
-argument-hint: plan-review|verify|ask|insight|delegate|batch-ask|batch-delegate [args]
+argument-hint: plan-review|verify|ask|insight|delegate|batch-ask|batch-delegate|bg-start|bg-status|bg-output|bg-cancel|bg-list [args]
 allowed-tools:
   - Read
   - Write
@@ -13,6 +13,7 @@ allowed-tools:
   - Bash(*scripts/dump_transcript_for_codex.py*)
   - Bash(*scripts/build_review_packet.py*)
   - Bash(*scripts/codex_batch.py*)
+  - Bash(*scripts/codex_bg.py*)
 ---
 
 # Codex — entry point único
@@ -234,6 +235,50 @@ Cada item declara um write-set (lista de paths). O batcher rejeita execução
 quando dois write-sets se sobrepõem. Após cada execução, compara write-set
 declarado vs `files_created/edited/deleted` reportados; marca
 `write_set_violated=true` quando o Codex extrapola.
+
+## Modos em background — `bg-start | bg-status | bg-output | bg-cancel | bg-list`
+
+Quando uma chamada do wrapper deve demorar (ex.: `delegate` >60s, `insight`
+>5min) e não convém bloquear a sessão, usar `scripts/codex_bg.py`:
+
+| Subcomando | Função |
+|---|---|
+| `bg-start <mode> [...args]` | Spawn destacado do wrapper. Retorna imediatamente com `run_id` e `pid`. |
+| `bg-status <run_id>` | Estado atual: `running \| done \| error \| cancelled`. |
+| `bg-output <run_id>` | JSON canônico do wrapper (mesmo schema dos modos síncronos) quando `done`. |
+| `bg-cancel <run_id>` | Mata o subprocesso e marca a run como `cancelled`. |
+| `bg-list [--limit N]` | Lista runs ativas e recentes. |
+
+**Regras operacionais:**
+- `bg-start` retorna controle imediatamente. **SEMPRE** exibir o `run_id`
+  ao usuário no momento do start, para que ele possa retomar com
+  `bg-status <run_id>` mesmo em sessões futuras.
+- Limite default de **5 runs simultâneas**. Configurável via
+  `--max-concurrent N` ou `CODEX_BG_MAX_CONCURRENT`. Quando o limite é
+  atingido, `bg-start` recusa com `status=error, reason=max_concurrent_reached`.
+- `bg-cancel` é idempotente.
+- Cleanup automático: runs terminadas com `mtime > 7 dias` são removidas.
+
+**Exemplo:**
+
+```bash
+# disparar
+"$SKILLS_PYTHON" "$USERPROFILE/.claude/skills/codex/scripts/codex_bg.py" \
+  start delegate \
+  --cwd "<cwd>" \
+  --task-file "<task.txt>"
+# {"status": "ok", "run_id": "abc123def456", "pid": 1234, ...}
+
+# checar mais tarde
+"$SKILLS_PYTHON" "$USERPROFILE/.claude/skills/codex/scripts/codex_bg.py" status abc123def456
+
+# coletar quando done
+"$SKILLS_PYTHON" "$USERPROFILE/.claude/skills/codex/scripts/codex_bg.py" output abc123def456
+```
+
+A saída de `bg-output` é o JSON canônico do wrapper — apresentar ao
+usuário com a mesma formatação dos modos síncronos (tabela meta + lista
+numerada de findings traduzidos).
 
 ## Saída (comum aos modos individuais)
 

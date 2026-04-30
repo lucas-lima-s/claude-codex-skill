@@ -3,31 +3,21 @@
 Itens registrados como evolução futura. Não implementar até que o critério
 de início esteja claro.
 
-## 1. Background agents (não-bloqueantes)
+## 1. Background agents (não-bloqueantes) — **IMPLEMENTADO (Phase 1)**
 
-Hoje todo modo do wrapper é síncrono — Claude espera o resultado. Para
-runs longos isso bloqueia a sessão.
+Implementado em `scripts/codex_bg.py` com 5 subcomandos
+(`start | status | output | cancel | list`). Estado persistido em
+`cache/bg_runs/<run_id>/` (meta.json + output.json + stderr.log +
+cancelled.flag). Limite default de 5 runs simultâneas, configurável via
+`--max-concurrent` ou `CODEX_BG_MAX_CONCURRENT`. Cleanup automático de
+runs terminadas com mtime > 7 dias. Heartbeat redirecionado para
+`stderr.log` do próprio run (nada vai para o stderr da sessão Claude).
+Ver `SKILL.md` (seção "Modos em background").
 
-Forma esperada:
-
-- `codex_bg.py start` aceita os mesmos args de um modo do wrapper e
-  devolve um `run_id` curto.
-- `codex_bg.py status <run_id>` retorna `running | done | error | cancelled`
-  com ETA.
-- `codex_bg.py output <run_id>` retorna o JSON canônico quando `done`.
-- `codex_bg.py cancel <run_id>` mata o subprocesso e marca `cancelled`.
-- `codex_bg.py list` lista runs ativos e recentes (últimos N).
-- Estado persistido em `cache/bg_runs/<run_id>/` com `meta.json`,
-  `output.json`, `stderr.log`. Cleanup de runs órfãos por mtime.
-- Heartbeat continua indo para um arquivo de log do próprio run, não para
-  o stderr da sessão original.
-
-Critério para iniciar:
-
-- Batch síncrono usado em casos reais (telemetria mostrando volume).
-- Telemetria evidenciando que o bloqueio em sessão é dor recorrente.
-- UX de status/cancelamento desenhada — como Claude apresenta o `run_id`,
-  como retoma, como o usuário recupera output esquecido.
+Pendência conhecida: `bg-start delegate` ainda permite lançar `delegate`
+em background sem o protocolo de 5 campos do `delegate` síncrono. Risco
+aceito conscientemente pelo autor; revisitar quando houver fluxo seguro
+de confirmação assíncrona.
 
 ## 2. Conversa multi-jogada Claude ↔ Codex (até 5 turnos)
 

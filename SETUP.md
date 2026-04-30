@@ -22,6 +22,7 @@ Ponte Claude Code → Codex CLI. Único ponto de entrada para automação.
 | `CODEX_WRAPPER_DISABLE_HEARTBEAT` | Quando `1`, desliga o heartbeat de progresso no `stderr`. |
 | `CODEX_WRAPPER_USE_JSON_STREAM` | Quando `1`, tenta `codex exec --json` (stream de eventos) com fallback automático para o modo padrão. |
 | `CODEX_WRAPPER_TELEMETRY_DISABLED` | Quando `1`, não grava em `cache/runs.jsonl`. |
+| `CODEX_BG_MAX_CONCURRENT` | Limite de runs simultâneas em background (default 5). Override via `--max-concurrent N` no `codex_bg.py start`. |
 
 ## Estrutura
 
@@ -36,6 +37,8 @@ Ponte Claude Code → Codex CLI. Único ponto de entrada para automação.
     dump_transcript_for_codex.py — dump filtrado do transcript da sessão
     build_review_packet.py       — monta packet para `plan-review`
     normalize_codex_result.py    — normaliza saída crua do Codex
+    codex_batch.py               — runner síncrono de batch-ask/batch-delegate
+    codex_bg.py                  — runner assíncrono (start/status/output/cancel/list)
     codex_output_schema.json     — JSON Schema usado em `--output-schema`
   cache/
     runs.jsonl                   — telemetria (rotaciona aos 5 MB para .1)
@@ -60,11 +63,12 @@ Detalhes em `SKILL.md`. Resumo:
 
 Veja `ROADMAP.md` na raiz da skill. Itens em aberto:
 
-- Background agents nomeados — execução não-bloqueante com consulta de
-  status, cancelamento e coleta posterior.
-- Conversa multi-jogada Claude ↔ Codex (até 5 turnos) com convergência ou
-  parada manual.
+- Conversa multi-jogada Claude ↔ Codex (até 3 turnos por default) com
+  convergência ou parada manual.
 - Cache de revisões por fingerprint, modo repro, parser de stream `--json`.
+
+Já implementado: background agents (`scripts/codex_bg.py`),
+`--reasoning-effort` configurável.
 
 ## Notas para outros usuários
 

@@ -1,0 +1,522 @@
+"""Background runner for the codex wrapper.
+
+Lets Claude fire off long Codex runs (delegate, insight, plan-review) without
+blocking the foreground session and reclaim results later.
+
+Subcommands (each prints a single JSON object on stdout)::
+
+    start <mode> [--cwd ...] [...wrapper args]
+        Spawns a detached subprocess running invoke_codex_with_claude.py
+        with the given args. Returns ``{run_id, started_at, pid}``.
+
+    status <run_id>
+        Reports current state. Returns
+        ``{status, started_at, finished_at, mode, pid, pid_alive}`` where
+        status is one of ``running | done | error | cancelled``.
+
+    output <run_id>
+        Returns the wrapper's canonical JSON output once status==done.
+        Returns ``{status: "error", reason: "still_running"}`` while the
+        process is alive; ``{status: "error", reason: "no_output"}`` when
+        the run terminated without writing usable JSON.
+
+    cancel <run_id>
+        Kills the subprocess tree and marks the run as cancelled. Idempotent.
+
+    list [--limit N]
+        Lists runs (default 50) ordered by ``started_at`` desc.
+
+Persistence layout (``cache/bg_runs/<run_id>/``)::
+
+    meta.json       wrapper args + pid + started_at + finished_at + status
+    output.json     canonical wrapper output (raw stdout of the subprocess)
+    stderr.log      subprocess stderr (heartbeat lines included with the
+                    [codex-heartbeat] prefix)
+    cancelled.flag  empty file; presence indicates explicit cancel
+
+Concurrency cap: ``--max-concurrent`` / ``CODEX_BG_MAX_CONCURRENT``
+(default 5). When exceeded, ``start`` refuses with
+``status=error, reason=max_concurrent_reached`` and lists the active runs.
+
+Cleanup: directories with ``mtime > 7d`` AND status in
+``{done, error, cancelled}`` are pruned at the start of every subcommand.
+Active runs are never touched.
+
+This script never raises: every error path returns a JSON object with
+``status=error`` and a short ``reason`` so callers can react programmatically.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import shutil
+import subprocess
+import sys
+import time
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
+BIN_DIR = Path(__file__).resolve().parent
+SKILL_DIR = BIN_DIR.parent
+WRAPPER = BIN_DIR / "invoke_codex_with_claude.py"
+CACHE_DIR = SKILL_DIR / "cache" / "bg_runs"
+
+DEFAULT_MAX_CONCURRENT = 5
+DEFAULT_CLEANUP_MAX_AGE_DAYS = 7
+LIST_DEFAULT_LIMIT = 50
+
+TERMINAL_STATUSES = ("done", "error", "cancelled")
+
+
+def _resolve_python() -> str:
+    for env_name in ("SKILLS_PYTHON", "CLAUDE_AUTOMATION_PYTHON"):
+        candidate = os.environ.get(env_name)
+        if candidate and Path(candidate).exists():
+            return candidate
+    return sys.executable
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _emit(payload: Dict[str, Any]) -> None:
+    text = json.dumps(payload, ensure_ascii=False)
+    try:
+        sys.stdout.buffer.write(text.encode("utf-8"))
+    except AttributeError:
+        sys.stdout.write(text)
+
+
+def _read_meta(run_dir: Path) -> Optional[Dict[str, Any]]:
+    meta_path = run_dir / "meta.json"
+    try:
+        text = meta_path.read_text(encoding="utf-8")
+    except (FileNotFoundError, OSError, UnicodeDecodeError):
+        return None
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _write_meta(run_dir: Path, meta: Dict[str, Any]) -> None:
+    try:
+        (run_dir / "meta.json").write_text(
+            json.dumps(meta, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    except OSError:
+        pass
+
+
+def _is_pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    if sys.platform == "win32":
+        try:
+            proc = subprocess.run(
+                ["tasklist", "/FI", f"PID eq {pid}"],
+                capture_output=True, text=True, timeout=5,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+        out = (proc.stdout or "").strip()
+        return str(pid) in out and "INFO:" not in out.upper()
+    try:
+        os.kill(pid, 0)
+        return True
+    except (OSError, ProcessLookupError):
+        return False
+
+
+def _kill_process_tree(pid: int) -> None:
+    if pid <= 0:
+        return
+    if sys.platform == "win32":
+        try:
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(pid)],
+                capture_output=True, timeout=5,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        return
+    try:
+        os.killpg(os.getpgid(pid), 15)
+    except (OSError, ProcessLookupError):
+        pass
+
+
+def _resolve_status(run_dir: Path, meta: Dict[str, Any]) -> Tuple[str, bool]:
+    """Returns (status, pid_alive). Updates meta in place when terminal."""
+    pid = int(meta.get("pid") or 0)
+    pid_alive = _is_pid_alive(pid)
+    if pid_alive:
+        return "running", True
+
+    cancelled = (run_dir / "cancelled.flag").exists()
+    output_path = run_dir / "output.json"
+    output_has_json = False
+    if output_path.exists():
+        try:
+            text = output_path.read_text(encoding="utf-8", errors="replace")
+            json.loads(text)
+            output_has_json = True
+        except (OSError, json.JSONDecodeError):
+            output_has_json = False
+
+    if cancelled:
+        status = "cancelled"
+    elif output_has_json:
+        status = "done"
+    else:
+        status = "error"
+
+    if meta.get("status") != status:
+        meta["status"] = status
+        meta.setdefault("finished_at", _now_iso())
+    return status, False
+
+
+def _list_active_run_ids() -> List[str]:
+    if not CACHE_DIR.exists():
+        return []
+    active: List[str] = []
+    for run_dir in CACHE_DIR.iterdir():
+        if not run_dir.is_dir():
+            continue
+        meta = _read_meta(run_dir)
+        if not meta:
+            continue
+        if meta.get("status") != "running":
+            continue
+        if _is_pid_alive(int(meta.get("pid") or 0)):
+            active.append(run_dir.name)
+    return active
+
+
+def _cleanup_old_runs(max_age_days: int = DEFAULT_CLEANUP_MAX_AGE_DAYS) -> None:
+    if not CACHE_DIR.exists():
+        return
+    cutoff = time.time() - max_age_days * 86400
+    for run_dir in CACHE_DIR.iterdir():
+        if not run_dir.is_dir():
+            continue
+        meta = _read_meta(run_dir)
+        if not meta:
+            continue
+        if meta.get("status") not in TERMINAL_STATUSES:
+            # Re-check liveness; if process is dead but meta is stale, skip
+            # cleanup for this round and let a status() call fix it.
+            if _is_pid_alive(int(meta.get("pid") or 0)):
+                continue
+        try:
+            mtime = run_dir.stat().st_mtime
+        except OSError:
+            continue
+        if mtime < cutoff:
+            shutil.rmtree(run_dir, ignore_errors=True)
+
+
+def _resolve_max_concurrent(cli_value: Optional[int]) -> int:
+    if cli_value is not None:
+        return max(1, int(cli_value))
+    env_value = os.environ.get("CODEX_BG_MAX_CONCURRENT")
+    if env_value:
+        try:
+            return max(1, int(env_value))
+        except ValueError:
+            pass
+    return DEFAULT_MAX_CONCURRENT
+
+
+# --------------------------------------------------------------- subcommands
+
+def cmd_start(args: argparse.Namespace) -> int:
+    _cleanup_old_runs()
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+    max_conc = _resolve_max_concurrent(args.max_concurrent)
+    active = _list_active_run_ids()
+    if len(active) >= max_conc:
+        _emit({
+            "status": "error",
+            "reason": "max_concurrent_reached",
+            "active_run_ids": active,
+            "limit": max_conc,
+        })
+        return 0
+
+    run_id = uuid.uuid4().hex[:12]
+    run_dir = CACHE_DIR / run_id
+    run_dir.mkdir(parents=True, exist_ok=False)
+
+    output_path = run_dir / "output.json"
+    stderr_path = run_dir / "stderr.log"
+
+    wrapper_args = list(args.passthrough or [])
+    cwd = args.cwd or os.getcwd()
+    if "--cwd" not in wrapper_args:
+        wrapper_args.extend(["--cwd", cwd])
+
+    cmd = [_resolve_python(), str(WRAPPER), args.mode, *wrapper_args]
+
+    try:
+        out_f = open(output_path, "wb", buffering=0)
+        err_f = open(stderr_path, "wb", buffering=0)
+    except OSError as exc:
+        shutil.rmtree(run_dir, ignore_errors=True)
+        _emit({"status": "error", "reason": f"cannot_open_logs: {exc.__class__.__name__}"})
+        return 0
+
+    creationflags = 0
+    start_new_session = False
+    if sys.platform == "win32":
+        creationflags = (
+            getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+            | getattr(subprocess, "DETACHED_PROCESS", 0)
+        )
+    else:
+        start_new_session = True
+
+    try:
+        # close_fds is left at the platform default. On Windows, that means
+        # only stdin/stdout/stderr handles passed here are inherited; all
+        # other handles from this script (including its own stdout) stay
+        # private. Without this, a parent subprocess.run() call blocks
+        # waiting for our stdout to drain because the child wrapper
+        # inherits it indirectly.
+        proc = subprocess.Popen(
+            cmd,
+            stdin=subprocess.DEVNULL,
+            stdout=out_f,
+            stderr=err_f,
+            cwd=cwd,
+            creationflags=creationflags,
+            start_new_session=start_new_session,
+        )
+    except (OSError, FileNotFoundError) as exc:
+        out_f.close()
+        err_f.close()
+        shutil.rmtree(run_dir, ignore_errors=True)
+        _emit({"status": "error", "reason": f"spawn_failed: {exc.__class__.__name__}"})
+        return 0
+    finally:
+        try:
+            out_f.close()
+        except OSError:
+            pass
+        try:
+            err_f.close()
+        except OSError:
+            pass
+
+    started_at = _now_iso()
+    meta = {
+        "run_id": run_id,
+        "mode": args.mode,
+        "cwd": cwd,
+        "args": wrapper_args,
+        "pid": proc.pid,
+        "started_at": started_at,
+        "finished_at": None,
+        "status": "running",
+    }
+    _write_meta(run_dir, meta)
+
+    _emit({
+        "status": "ok",
+        "run_id": run_id,
+        "pid": proc.pid,
+        "started_at": started_at,
+        "mode": args.mode,
+    })
+    return 0
+
+
+def cmd_status(args: argparse.Namespace) -> int:
+    _cleanup_old_runs()
+    run_dir = CACHE_DIR / args.run_id
+    meta = _read_meta(run_dir) if run_dir.exists() else None
+    if meta is None:
+        _emit({"status": "error", "reason": "not_found", "run_id": args.run_id})
+        return 0
+
+    status, pid_alive = _resolve_status(run_dir, meta)
+    if status in TERMINAL_STATUSES and meta.get("status") != "running":
+        # already reflected; no rewrite needed unless missing finished_at
+        if meta.get("finished_at") is None:
+            meta["finished_at"] = _now_iso()
+            _write_meta(run_dir, meta)
+    elif status in TERMINAL_STATUSES:
+        _write_meta(run_dir, meta)
+
+    _emit({
+        "status": status,
+        "run_id": args.run_id,
+        "mode": meta.get("mode"),
+        "pid": meta.get("pid"),
+        "pid_alive": pid_alive,
+        "started_at": meta.get("started_at"),
+        "finished_at": meta.get("finished_at"),
+    })
+    return 0
+
+
+def cmd_output(args: argparse.Namespace) -> int:
+    _cleanup_old_runs()
+    run_dir = CACHE_DIR / args.run_id
+    meta = _read_meta(run_dir) if run_dir.exists() else None
+    if meta is None:
+        _emit({"status": "error", "reason": "not_found", "run_id": args.run_id})
+        return 0
+
+    status, _alive = _resolve_status(run_dir, meta)
+    if status == "running":
+        _emit({"status": "error", "reason": "still_running", "run_id": args.run_id})
+        return 0
+
+    output_path = run_dir / "output.json"
+    if not output_path.exists() or output_path.stat().st_size == 0:
+        _emit({"status": "error", "reason": "no_output", "run_id": args.run_id})
+        return 0
+
+    try:
+        text = output_path.read_text(encoding="utf-8", errors="replace")
+        data = json.loads(text)
+    except (OSError, json.JSONDecodeError) as exc:
+        _emit({"status": "error", "reason": f"unreadable_output: {exc.__class__.__name__}",
+               "run_id": args.run_id})
+        return 0
+
+    if not isinstance(data, dict):
+        _emit({"status": "error", "reason": "output_not_object", "run_id": args.run_id})
+        return 0
+
+    _emit(data)
+    return 0
+
+
+def cmd_cancel(args: argparse.Namespace) -> int:
+    _cleanup_old_runs()
+    run_dir = CACHE_DIR / args.run_id
+    meta = _read_meta(run_dir) if run_dir.exists() else None
+    if meta is None:
+        _emit({"status": "error", "reason": "not_found", "run_id": args.run_id})
+        return 0
+
+    pid = int(meta.get("pid") or 0)
+    was_alive = _is_pid_alive(pid)
+    _kill_process_tree(pid)
+    try:
+        (run_dir / "cancelled.flag").write_text("", encoding="utf-8")
+    except OSError:
+        pass
+
+    # Update meta so subsequent status calls see "cancelled" deterministically.
+    meta["status"] = "cancelled"
+    meta.setdefault("finished_at", _now_iso())
+    _write_meta(run_dir, meta)
+
+    _emit({
+        "status": "ok",
+        "run_id": args.run_id,
+        "cancelled": True,
+        "was_alive": was_alive,
+    })
+    return 0
+
+
+def cmd_list(args: argparse.Namespace) -> int:
+    _cleanup_old_runs()
+    runs: List[Dict[str, Any]] = []
+    if CACHE_DIR.exists():
+        for run_dir in CACHE_DIR.iterdir():
+            if not run_dir.is_dir():
+                continue
+            meta = _read_meta(run_dir)
+            if not meta:
+                continue
+            status, _alive = _resolve_status(run_dir, meta)
+            runs.append({
+                "run_id": run_dir.name,
+                "mode": meta.get("mode"),
+                "status": status,
+                "started_at": meta.get("started_at"),
+                "finished_at": meta.get("finished_at"),
+                "pid": meta.get("pid"),
+            })
+
+    runs.sort(key=lambda r: str(r.get("started_at") or ""), reverse=True)
+    limit = max(1, int(args.limit or LIST_DEFAULT_LIMIT))
+    _emit({"status": "ok", "runs": runs[:limit], "count": len(runs)})
+    return 0
+
+
+# --------------------------------------------------------------------- main
+
+def _parse_cli(argv: Optional[List[str]] = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Background runner for invoke_codex_with_claude.py.",
+    )
+    sub = parser.add_subparsers(dest="subcommand", required=True)
+
+    p_start = sub.add_parser("start", help="spawn a detached wrapper run")
+    p_start.add_argument("mode", help="wrapper mode (plan-review|verify|ask|insight|delegate)")
+    p_start.add_argument("--cwd", default=None,
+                         help="cwd for the wrapper (defaults to current dir)")
+    p_start.add_argument("--max-concurrent", type=int, default=None,
+                         help=f"override max concurrent runs (default {DEFAULT_MAX_CONCURRENT})")
+    # Wrapper-specific flags (--last-message-file, --task-file, --target-path,
+    # --reasoning-effort, etc.) are forwarded as-is. We collect them via
+    # parse_known_args below; using nargs=REMAINDER would otherwise eat our
+    # own flags like --max-concurrent.
+
+    p_status = sub.add_parser("status", help="report run state")
+    p_status.add_argument("run_id")
+
+    p_output = sub.add_parser("output", help="get canonical JSON of a finished run")
+    p_output.add_argument("run_id")
+
+    p_cancel = sub.add_parser("cancel", help="kill a running subprocess")
+    p_cancel.add_argument("run_id")
+
+    p_list = sub.add_parser("list", help="list active and recent runs")
+    p_list.add_argument("--limit", type=int, default=LIST_DEFAULT_LIMIT)
+
+    args, unknown = parser.parse_known_args(argv)
+    args.passthrough = unknown if args.subcommand == "start" else []
+    if args.subcommand != "start" and unknown:
+        # Non-start subcommands shouldn't carry stray args; surface them as
+        # an error rather than silently swallow.
+        parser.error(f"unrecognized arguments: {' '.join(unknown)}")
+    return args
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    args = _parse_cli(argv)
+    handler = {
+        "start":  cmd_start,
+        "status": cmd_status,
+        "output": cmd_output,
+        "cancel": cmd_cancel,
+        "list":   cmd_list,
+    }[args.subcommand]
+    try:
+        return handler(args)
+    except Exception as exc:  # never raise; same contract as the wrapper
+        _emit({
+            "status": "error",
+            "reason": f"internal_error: {exc.__class__.__name__}",
+            "subcommand": args.subcommand,
+        })
+        return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
