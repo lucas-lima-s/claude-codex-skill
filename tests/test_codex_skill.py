@@ -113,9 +113,7 @@ class Runner:
 # ----------------------------------------------------------------------- helpers
 
 
-def _base_env(
-    behavior: str = "success", timeout: str = "10", extra: dict[str, str] | None = None
-) -> dict[str, str]:
+def _base_env(behavior: str = "success", timeout: str = "10", extra: dict[str, str] | None = None) -> dict[str, str]:
     env = os.environ.copy()
     env["CODEX_WRAPPER_CODEX_OVERRIDE"] = str(FAKE)
     env["CODEX_WRAPPER_TIMEOUT_SECONDS"] = timeout
@@ -449,9 +447,7 @@ def test_review_packet_max_files(r: Runner) -> None:
         )
         body = out.read_text(encoding="utf-8")
         # 12 should be included, 2 should be skipped with manifest entries.
-        included_count = sum(
-            1 for c in cited if f"### {tmp.resolve()}" in body and c.replace("/", os.sep) in body
-        )
+        included_count = sum(1 for c in cited if f"### {tmp.resolve()}" in body and c.replace("/", os.sep) in body)
         skipped_count = body.count("skipped (max_files=12 exceeded)")
         r.eq(skipped_count, 2, "packet skips exactly 2 files when 14 cited")
         # Loose includes check (resolved path may differ on Windows)
@@ -529,10 +525,7 @@ def test_batch_ask_speedup(r: Runner) -> None:
     with _tempdir() as tmp:
         batch = {
             "max_parallel": 4,
-            "tasks": [
-                {"id": f"q{i}", "question": f"Question {i}?", "cwd": str(SKILL_DIR)}
-                for i in range(4)
-            ],
+            "tasks": [{"id": f"q{i}", "question": f"Question {i}?", "cwd": str(SKILL_DIR)} for i in range(4)],
         }
         batch_file = tmp / "batch.json"
         batch_file.write_text(json.dumps(batch), encoding="utf-8")
@@ -687,7 +680,6 @@ def test_telemetry_schema(r: Runner) -> None:
     cache_dir = SKILL_DIR / "cache"
     cache_dir.mkdir(exist_ok=True)
     runs = cache_dir / "runs.jsonl"
-    backup = cache_dir / "runs.jsonl.1"
     # Snapshot
     initial = runs.read_text(encoding="utf-8") if runs.exists() else ""
     initial_lines = initial.count("\n")
@@ -818,9 +810,7 @@ def test_codex_config(r: Runner) -> None:
             cc.t("normalize.summary.not_structured"),
             "t pt-BR resolves normalize key",
         )
-        r.in_(
-            "Timeout", cc.t("wrapper.error.timeout", timeout=30.0), "t pt-BR resolves with kwargs"
-        )
+        r.in_("Timeout", cc.t("wrapper.error.timeout", timeout=30.0), "t pt-BR resolves with kwargs")
 
         # t() — en-US direct lookup
         os.environ["CODEX_LOCALE"] = "en-US"
@@ -923,9 +913,7 @@ def test_analyze_plan_complexity(r: Runner) -> None:
 
         # Case 2: sensitive plan (cross-module + keywords + 3 phases + large)
         sensitive_lines = ["# Sensitive plan", ""]
-        sensitive_lines.append(
-            "Refactor de auth, payment e migration. Toca `handler/`, `service/`, `repo/` e `api/`."
-        )
+        sensitive_lines.append("Refactor de auth, payment e migration. Toca `handler/`, `service/`, `repo/` e `api/`.")
         for n in range(1, 4):
             sensitive_lines.append(f"## Phase {n}")
             for f_idx in range(8):
@@ -949,9 +937,7 @@ def test_analyze_plan_complexity(r: Runner) -> None:
         r.eq(data.get("suggest_iterative"), True, "sensitive plan → suggest_iterative=true")
         r.truthy((data.get("score") or 0) >= 3, "sensitive plan → score >= 3")
         reasons = data.get("reasons") or []
-        r.truthy(
-            any("keywords" in (rs or "") for rs in reasons), "reasons mention sensitive keywords"
-        )
+        r.truthy(any("keywords" in (rs or "") for rs in reasons), "reasons mention sensitive keywords")
 
         # Case 3: missing file → fails gracefully
         missing = tmp / "does_not_exist.md"

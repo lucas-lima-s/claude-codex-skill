@@ -93,9 +93,7 @@ class _CitedEntry:
         self.first_index: int = first_index
 
 
-def _detect_cited_files(
-    plan_text: str, cwd: Path, target_path: Path | None
-) -> OrderedDict[Path, _CitedEntry]:
+def _detect_cited_files(plan_text: str, cwd: Path, target_path: Path | None) -> OrderedDict[Path, _CitedEntry]:
     """Resolve every plausible file reference in ``plan_text``.
 
     Iteration order matches first mention so callers can apply the priority rules.
@@ -122,9 +120,7 @@ def _detect_cited_files(
     return found
 
 
-def _select_files(
-    cited: OrderedDict[Path, _CitedEntry], limit: int
-) -> tuple[list[Path], list[Path]]:
+def _select_files(cited: OrderedDict[Path, _CitedEntry], limit: int) -> tuple[list[Path], list[Path]]:
     """Return (selected, skipped) honouring the documented priority rules."""
     if not cited:
         return [], []
@@ -141,9 +137,7 @@ def _select_files(
     return selected, skipped
 
 
-def _file_window(
-    text: str, cited_lines: list[int], max_lines: int
-) -> tuple[list[tuple[int, str]], int, str]:
+def _file_window(text: str, cited_lines: list[int], max_lines: int) -> tuple[list[tuple[int, str]], int, str]:
     """Return ([(line_no, line_content), ...], total_lines, selection_reason)."""
     raw_lines = text.splitlines()
     total = len(raw_lines)
@@ -194,11 +188,7 @@ def _git_status(cwd: Path) -> str:
 
 def _collect_context(cwd: Path, target_path: Path | None) -> str:
     helper = Path(__file__).resolve().parent / "collect_claude_context.py"
-    python = (
-        os.environ.get("SKILLS_PYTHON")
-        or os.environ.get("CLAUDE_AUTOMATION_PYTHON")
-        or sys.executable
-    )
+    python = os.environ.get("SKILLS_PYTHON") or os.environ.get("CLAUDE_AUTOMATION_PYTHON") or sys.executable
     cmd = [python, str(helper), "--cwd", str(cwd), "--format", "text"]
     if target_path is not None:
         cmd += ["--target-path", str(target_path)]
@@ -301,10 +291,7 @@ def _build_packet(
             body = cut.decode("utf-8")
         except UnicodeDecodeError:
             body = cut.decode("utf-8", errors="ignore")
-        body += (
-            "\n\n[packet truncated: exceeded max_bytes="
-            f"{max_bytes}; original_size={len(encoded)} bytes]\n"
-        )
+        body += "\n\n[packet truncated: exceeded max_bytes=" f"{max_bytes}; original_size={len(encoded)} bytes]\n"
 
     final_size = len(body.encode("utf-8"))
     body += f"\n\n_packet bytes: {final_size}_\n"

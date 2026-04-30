@@ -96,9 +96,7 @@ def _normalize_findings(raw_findings: Any) -> list[dict[str, str]]:
     return out
 
 
-def _compute_fingerprint(
-    findings: list[dict[str, str]], severity: str, block_recommended: bool
-) -> str:
+def _compute_fingerprint(findings: list[dict[str, str]], severity: str, block_recommended: bool) -> str:
     if not findings:
         return ""
     canonical = [
@@ -116,9 +114,7 @@ def _compute_fingerprint(
         "severity": severity,
         "block_recommended": block_recommended,
     }
-    digest = hashlib.sha256(
-        json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
-    ).hexdigest()
+    digest = hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
     return digest[:16]
 
 
@@ -164,7 +160,5 @@ def normalize(raw: str, mode: str) -> dict[str, Any]:
     else:
         result["block_recommended"] = False
 
-    result["fingerprint"] = _compute_fingerprint(
-        result["findings"], result["severity"], result["block_recommended"]
-    )
+    result["fingerprint"] = _compute_fingerprint(result["findings"], result["severity"], result["block_recommended"])
     return result

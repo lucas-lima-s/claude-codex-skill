@@ -49,7 +49,8 @@ from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from codex_config import get as _config_get, t  # noqa: E402
+from codex_config import get as _config_get  # noqa: E402
+from codex_config import t
 
 THRESHOLD_SCORE = int(_config_get("complexity.threshold_score", 3))
 SIZE_THRESHOLD_BYTES = int(_config_get("complexity.size_threshold_bytes", 4 * 1024))
@@ -59,8 +60,7 @@ PHASES_THRESHOLD = int(_config_get("complexity.phases_threshold", 2))
 # A single regex for paths matching common code/doc extensions. Anchored to
 # word boundaries to avoid false positives inside URLs or random tokens.
 FILE_PATH_RE = re.compile(
-    r"\b[\w./-]+\.(?:py|ts|tsx|js|jsx|md|sh|ps1|json|yml|yaml|toml|sql|"
-    r"go|rs|java|kt|cpp|c|h|hpp|rb|php|cs|swift)\b"
+    r"\b[\w./-]+\.(?:py|ts|tsx|js|jsx|md|sh|ps1|json|yml|yaml|toml|sql|" r"go|rs|java|kt|cpp|c|h|hpp|rb|php|cs|swift)\b"
 )
 
 PHASE_HEADING_RE = re.compile(

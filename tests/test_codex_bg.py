@@ -127,9 +127,7 @@ def _bg_env(behavior: str = "success", extra: dict[str, str] | None = None) -> d
     return env
 
 
-def _run_bg(
-    args: list[str], env: dict[str, str] | None = None, timeout: float = 30.0
-) -> tuple[dict[str, Any], str]:
+def _run_bg(args: list[str], env: dict[str, str] | None = None, timeout: float = 30.0) -> tuple[dict[str, Any], str]:
     cmd = [PYTHON, str(BG_SCRIPT), *args]
     proc = subprocess.run(
         cmd,
@@ -299,7 +297,7 @@ def test_list_orders_runs(r: Runner) -> None:
         env = _bg_env(behavior="success")
 
         run_ids: list[str] = []
-        for i in range(3):
+        for _ in range(3):
             res, _ = _run_bg(
                 ["start", "plan-review", "--cwd", str(SKILL_DIR), "--last-message-file", str(plan)],
                 env=env,

@@ -67,9 +67,13 @@ WRAPPER = BIN_DIR / "invoke_codex_with_claude.py"
 sys.path.insert(0, str(BIN_DIR))
 from codex_config import (  # noqa: E402
     ensure_setup_complete,
-    get as _config_get,
-    resolve_python as _resolve_python,
     t,
+)
+from codex_config import (
+    get as _config_get,
+)
+from codex_config import (
+    resolve_python as _resolve_python,
 )
 
 DIALOGUE_PREFIX = "codex_dialogue_"
@@ -168,9 +172,7 @@ def _summarise_turn(turn: int, findings_payload: dict[str, Any]) -> str:
         loc = (f.get("location") or "").strip()
         bits = [b for b in [sev, title, loc] if b]
         titles.append(" / ".join(bits) if bits else t("dialogue.history.untitled"))
-    bullets = (
-        "\n".join(f"  - {title}" for title in titles) or f"  - {t('dialogue.history.no_findings')}"
-    )
+    bullets = "\n".join(f"  - {title}" for title in titles) or f"  - {t('dialogue.history.no_findings')}"
     return (
         t(
             "dialogue.history.turn_header",

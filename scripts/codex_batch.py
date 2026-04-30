@@ -56,9 +56,13 @@ WRAPPER = BIN_DIR / "invoke_codex_with_claude.py"
 sys.path.insert(0, str(BIN_DIR))
 from codex_config import (  # noqa: E402
     ensure_setup_complete,
-    get as _config_get,
-    resolve_python as _resolve_python,
     t,
+)
+from codex_config import (
+    get as _config_get,
+)
+from codex_config import (
+    resolve_python as _resolve_python,
 )
 
 DEFAULT_MAX_PARALLEL = int(_config_get("batch.default_max_parallel", 4))
@@ -103,9 +107,7 @@ def _validate_disjoint_write_sets(tasks: list[dict[str, Any]]) -> list[dict[str,
     return overlaps or None
 
 
-def _check_write_set_violation(
-    declared: list[Path], reported: dict[str, list[str]], base: Path
-) -> bool:
+def _check_write_set_violation(declared: list[Path], reported: dict[str, list[str]], base: Path) -> bool:
     declared_set = set(declared)
     if not declared_set:
         return False
@@ -197,14 +199,9 @@ def _run_wrapper(sub_mode: str, task: dict[str, Any], batch_id: str) -> tuple[st
         }
         if sub_mode == "batch-delegate":
             declared = _normalize_paths(task.get("write_set") or [], Path(cwd).resolve())
-            reported = {
-                k: wrapper_result.get(k) or []
-                for k in ("files_created", "files_edited", "files_deleted")
-            }
+            reported = {k: wrapper_result.get(k) or [] for k in ("files_created", "files_edited", "files_deleted")}
             item["write_set"] = [str(p) for p in declared]
-            item["write_set_violated"] = _check_write_set_violation(
-                declared, reported, Path(cwd).resolve()
-            )
+            item["write_set_violated"] = _check_write_set_violation(declared, reported, Path(cwd).resolve())
         return task_id, item
     finally:
         try:

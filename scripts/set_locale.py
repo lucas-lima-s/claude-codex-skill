@@ -57,7 +57,7 @@ def main(argv: list[str] | None = None) -> int:
                 current = loaded
         except (OSError, json.JSONDecodeError):
             print(
-                f"Warning: existing config.local.json is malformed; rewriting.",
+                "Warning: existing config.local.json is malformed; rewriting.",
                 file=sys.stderr,
             )
 

@@ -76,9 +76,13 @@ COLLECT_SCRIPT = BIN_DIR / "collect_claude_context.py"
 sys.path.insert(0, str(BIN_DIR))
 from codex_config import (  # noqa: E402
     ensure_setup_complete,
-    get as _config_get,
-    resolve_python as _resolve_python,
     t,
+)
+from codex_config import (
+    get as _config_get,
+)
+from codex_config import (
+    resolve_python as _resolve_python,
 )
 
 CACHE_DIR = SKILL_DIR / "cache"
@@ -789,9 +793,7 @@ def _parse_cli(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--task-file", default=None)
     parser.add_argument("--question-file", default=None)
     parser.add_argument("--focus-file", default=None)
-    parser.add_argument(
-        "--review-packet-file", default=None, help=t("wrapper.cli.help.review_packet_file")
-    )
+    parser.add_argument("--review-packet-file", default=None, help=t("wrapper.cli.help.review_packet_file"))
     parser.add_argument("--transcript-file", default=None)
     parser.add_argument("--transcript-jsonl-path", default=None)
     parser.add_argument(
@@ -910,13 +912,9 @@ def main(argv: list[str] | None = None) -> int:
         user_payload = _assemble_user_payload(args)
         heartbeat.set_phase("collecting-context")
         context_text = _collect_context(cwd, target_path)
-        transcript_text = _read_text_safely(
-            Path(args.transcript_file) if args.transcript_file else None
-        )
+        transcript_text = _read_text_safely(Path(args.transcript_file) if args.transcript_file else None)
         transcript_jsonl_path = args.transcript_jsonl_path or ""
-        prompt = _build_prompt(
-            args.mode, context_text, user_payload, transcript_text, transcript_jsonl_path
-        )
+        prompt = _build_prompt(args.mode, context_text, user_payload, transcript_text, transcript_jsonl_path)
         timeout = _resolve_timeout(args.mode)
         effort_override = _resolve_effort_override(getattr(args, "reasoning_effort", None))
         heartbeat.set_phase("invoking-codex")

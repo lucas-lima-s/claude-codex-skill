@@ -68,9 +68,13 @@ CACHE_DIR = SKILL_DIR / "cache" / "bg_runs"
 sys.path.insert(0, str(BIN_DIR))
 from codex_config import (  # noqa: E402
     ensure_setup_complete,
-    get as _config_get,
-    resolve_python as _resolve_python,
     t,
+)
+from codex_config import (
+    get as _config_get,
+)
+from codex_config import (
+    resolve_python as _resolve_python,
 )
 
 DEFAULT_MAX_CONCURRENT = int(_config_get("background.default_max_concurrent", 5))
@@ -284,9 +288,7 @@ def cmd_start(args: argparse.Namespace) -> int:
     creationflags = 0
     start_new_session = False
     if sys.platform == "win32":
-        creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(
-            subprocess, "DETACHED_PROCESS", 0
-        )
+        creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(subprocess, "DETACHED_PROCESS", 0)
     else:
         start_new_session = True
 

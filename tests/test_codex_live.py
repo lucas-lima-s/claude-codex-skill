@@ -96,11 +96,7 @@ class Runner:
         if needle in haystack:
             self.passed_(label)
         else:
-            short = (
-                (haystack[:200] + "...")
-                if isinstance(haystack, str) and len(haystack) > 200
-                else haystack
-            )
+            short = (haystack[:200] + "...") if isinstance(haystack, str) and len(haystack) > 200 else haystack
             self.fail(label, f"{needle!r} not found in {short!r}")
 
     def in_any(self, needles: list[str], haystack: str, label: str) -> None:
@@ -116,8 +112,7 @@ class Runner:
         else:
             self.fail(
                 label,
-                f"status={result.get('status')!r} not in {allowed!r}; "
-                f"summary={result.get('summary', '')[:120]!r}",
+                f"status={result.get('status')!r} not in {allowed!r}; " f"summary={result.get('summary', '')[:120]!r}",
             )
 
 
@@ -172,9 +167,7 @@ def _run_wrapper(
     return result, elapsed
 
 
-def _run_batch(
-    sub_mode: str, payload: dict[str, Any], timeout: int = 600
-) -> tuple[dict[str, Any], float]:
+def _run_batch(sub_mode: str, payload: dict[str, Any], timeout: int = 600) -> tuple[dict[str, Any], float]:
     with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False)
         path = f.name
@@ -252,9 +245,7 @@ def test_plan_review_real(r: Runner) -> None:
         r.truthy("fingerprint" in result, "plan-review fingerprint present")
         # findings is a list (may be empty if Codex thinks the plan is fine)
         r.truthy(isinstance(result.get("findings"), list), "plan-review findings is list")
-        print(
-            f"     elapsed={elapsed:.1f}s  output_bytes={len(result.get('raw_codex_output') or '')}"
-        )
+        print(f"     elapsed={elapsed:.1f}s  output_bytes={len(result.get('raw_codex_output') or '')}")
 
 
 def test_ask_real(r: Runner) -> None:
@@ -319,9 +310,7 @@ def test_verify_real(r: Runner) -> None:
         blob = (
             result.get("summary", "")
             + " "
-            + " ".join(
-                f.get("title", "") + " " + f.get("detail", "") for f in result.get("findings", [])
-            )
+            + " ".join(f.get("title", "") + " " + f.get("detail", "") for f in result.get("findings", []))
         ).lower()
         r.in_any(
             ["syntax", "parenthes", "incomplete", "broken", "invalid"],
@@ -396,8 +385,7 @@ def test_delegate_outside_workspace(r: Runner) -> None:
         # Real assertions on the filesystem (not the JSON report).
         edited_ok = (
             target_file.is_file()
-            and target_file.read_text(encoding="utf-8", errors="replace").strip()
-            == "EDITED-BY-CODEX"
+            and target_file.read_text(encoding="utf-8", errors="replace").strip() == "EDITED-BY-CODEX"
         )
         r.truthy(edited_ok, "delegate-out: external.txt was REWRITTEN to 'EDITED-BY-CODEX'")
         r.truthy(not placeholder.exists(), "delegate-out: deleteme.txt was actually deleted")
@@ -500,9 +488,7 @@ def test_needs_input_real(r: Runner) -> None:
                 )
             )
         )
-        r.truthy(
-            signals_vagueness, "vague-plan: Codex signals vagueness (needs_input/findings/summary)"
-        )
+        r.truthy(signals_vagueness, "vague-plan: Codex signals vagueness (needs_input/findings/summary)")
         print(
             f"     elapsed={elapsed:.1f}s  status={result.get('status')}  "
             f"findings={len(result.get('findings', []))}  "
@@ -532,8 +518,7 @@ def main() -> int:
     duration = time.monotonic() - started
     print()
     print(
-        f"=== summary: {r.passed} passed, {r.failed} failed, "
-        f"{r.skipped} skipped in {duration:.1f}s wall-clock ==="
+        f"=== summary: {r.passed} passed, {r.failed} failed, " f"{r.skipped} skipped in {duration:.1f}s wall-clock ==="
     )
     print(f"     Codex sub-process time:   {r.total_seconds:.1f}s")
     print(f"     Codex output bytes total: {r.token_proxy_bytes}  (proxy for token spend)")

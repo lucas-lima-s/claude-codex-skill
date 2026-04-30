@@ -119,5 +119,5 @@ to land a new one:
   "$SKILLS_PYTHON" -m black --check .
   ```
 
-  Both are configured in `pyproject.toml` (line length 100, target Python
+  Both are configured in `pyproject.toml` (line length 120, target Python
   3.10).

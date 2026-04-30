@@ -207,9 +207,7 @@ def main(argv: list[str] | None = None) -> int:
         global_claude_md=Path(args.global_claude_md) if args.global_claude_md else None,
     )
 
-    payload = (
-        json.dumps(result, ensure_ascii=False) if args.format == "json" else format_text(result)
-    )
+    payload = json.dumps(result, ensure_ascii=False) if args.format == "json" else format_text(result)
     # Force UTF-8 on stdout regardless of the console's code page (Windows
     # defaults to cp1252 in Python 3.8, which crashes on non-ASCII content).
     try:
