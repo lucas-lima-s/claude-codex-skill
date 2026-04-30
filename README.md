@@ -87,9 +87,13 @@ Depois de instalada, o Claude reconhece automaticamente frases naturais como:
   tarefa literal, `cwd`, branch, paths fora do workspace e palavras de
   risco detectadas (`delete`, `rm -rf`, `force`, `reset --hard`, etc.).
 - Todos os outros modos usam `--sandbox read-only`.
-- Credenciais (ex.: `COMPOSIO_API_KEY`) são lidas de
-  `~/.claude/credentials.env` e injetadas no env do subprocesso — nunca
-  aparecem em logs.
+- Credenciais propagadas para o subprocesso são declarativas em
+  `settings.credentials.propagate` (config-driven, default vazio). As
+  fontes ficam em `settings.credentials.source` (lista ordenada,
+  default `["./.env", "~/.claude/credentials.env"]`). Apenas as chaves
+  listadas são injetadas no env do subprocesso a partir desses
+  arquivos — valores nunca aparecem em logs. Variáveis já presentes no
+  env do processo pai são herdadas como em qualquer subprocesso POSIX.
 - Telemetria local (`cache/runs.jsonl`) está no `.gitignore` por padrão.
 
 ## Status e roadmap

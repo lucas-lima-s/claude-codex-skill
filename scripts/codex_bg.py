@@ -65,21 +65,18 @@ WRAPPER = BIN_DIR / "invoke_codex_with_claude.py"
 CACHE_DIR = SKILL_DIR / "cache" / "bg_runs"
 
 sys.path.insert(0, str(BIN_DIR))
-from codex_config import get as _config_get, t  # noqa: E402
+from codex_config import (  # noqa: E402
+    ensure_setup_complete,
+    get as _config_get,
+    resolve_python as _resolve_python,
+    t,
+)
 
 DEFAULT_MAX_CONCURRENT = int(_config_get("background.default_max_concurrent", 5))
 DEFAULT_CLEANUP_MAX_AGE_DAYS = int(_config_get("background.default_cleanup_max_age_days", 7))
 LIST_DEFAULT_LIMIT = int(_config_get("background.list_default_limit", 50))
 
 TERMINAL_STATUSES = ("done", "error", "cancelled")
-
-
-def _resolve_python() -> str:
-    for env_name in ("SKILLS_PYTHON", "CLAUDE_AUTOMATION_PYTHON"):
-        candidate = os.environ.get(env_name)
-        if candidate and Path(candidate).exists():
-            return candidate
-    return sys.executable
 
 
 def _now_iso() -> str:
@@ -500,8 +497,13 @@ def _parse_cli(argv: Optional[List[str]] = None) -> argparse.Namespace:
     return args
 
 
+_PASSIVE_SUBCOMMANDS = ("status", "output", "cancel", "list")
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     args = _parse_cli(argv)
+    if args.subcommand not in _PASSIVE_SUBCOMMANDS:
+        ensure_setup_complete()
     handler = {
         "start":  cmd_start,
         "status": cmd_status,

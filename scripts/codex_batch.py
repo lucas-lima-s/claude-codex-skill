@@ -53,19 +53,16 @@ BIN_DIR = Path(__file__).resolve().parent
 WRAPPER = BIN_DIR / "invoke_codex_with_claude.py"
 
 sys.path.insert(0, str(BIN_DIR))
-from codex_config import get as _config_get, t  # noqa: E402
+from codex_config import (  # noqa: E402
+    ensure_setup_complete,
+    get as _config_get,
+    resolve_python as _resolve_python,
+    t,
+)
 
 DEFAULT_MAX_PARALLEL = int(_config_get("batch.default_max_parallel", 4))
 MAX_PARALLEL_CEILING = int(_config_get("batch.max_parallel_ceiling", 8))
 ITEM_SAFETY_TIMEOUT = int(_config_get("batch.item_safety_timeout_seconds", 900))
-
-
-def _resolve_python() -> str:
-    for env_name in ("SKILLS_PYTHON", "CLAUDE_AUTOMATION_PYTHON"):
-        candidate = os.environ.get(env_name)
-        if candidate and Path(candidate).exists():
-            return candidate
-    return sys.executable
 
 
 def _normalize_paths(paths: List[str], base: Path) -> List[Path]:
@@ -293,6 +290,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
     parser.add_argument("--input-file", required=True, help=t("batch.cli.help.input_file"))
     args = parser.parse_args(argv)
+    # Both batch sub-modes (batch-ask, batch-delegate) are active and
+    # invoke Codex; no passive subcommand here.
+    ensure_setup_complete()
 
     try:
         payload = json.loads(Path(args.input_file).read_text(encoding="utf-8"))

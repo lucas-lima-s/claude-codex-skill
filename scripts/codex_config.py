@@ -19,6 +19,8 @@ from __future__ import annotations
 import json
 import locale as _stdlib_locale
 import os
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -99,8 +101,9 @@ def detect_locale() -> str:
 
     Priority:
       1. ``CODEX_LOCALE`` env var (raw, e.g. ``en-US`` or ``pt_BR``).
-      2. System locale via ``locale.getdefaultlocale()``.
-      3. ``DEFAULT_LOCALE`` (pt-BR).
+      2. ``settings.locale`` in ``config.local.json``.
+      3. System locale via ``locale.getdefaultlocale()``.
+      4. ``DEFAULT_LOCALE`` (pt-BR).
 
     Underscores are normalised to hyphens (``pt_BR`` → ``pt-BR``) so the
     value matches the JSON keys.
@@ -113,6 +116,14 @@ def detect_locale() -> str:
     if env_value and env_value.strip():
         _cached_locale = env_value.replace("_", "-").strip()
         return _cached_locale
+
+    cfg = _load_config()
+    settings = cfg.get("settings") if isinstance(cfg, dict) else None
+    if isinstance(settings, dict):
+        config_locale = settings.get("locale")
+        if isinstance(config_locale, str) and config_locale.strip():
+            _cached_locale = config_locale.replace("_", "-").strip()
+            return _cached_locale
 
     try:
         sys_locale, _enc = _stdlib_locale.getdefaultlocale()
@@ -169,3 +180,63 @@ def t(key: str, **kwargs: Any) -> str:
         return template.format(**kwargs)
     except (KeyError, IndexError, ValueError):
         return template
+
+
+def resolve_python() -> str:
+    """Centralised Python resolver shared by every entry-point and by
+    ``ensure_setup_complete``.
+
+    Priority: ``SKILLS_PYTHON`` env -> ``CLAUDE_AUTOMATION_PYTHON`` env ->
+    ``sys.executable``. The first env var that points to an existing file
+    wins.
+    """
+    for env_name in ("SKILLS_PYTHON", "CLAUDE_AUTOMATION_PYTHON"):
+        candidate = os.environ.get(env_name)
+        if candidate and Path(candidate).exists():
+            return candidate
+    return sys.executable
+
+
+def ensure_setup_complete() -> None:
+    """Auto-trigger the setup wizard the first time the skill is used in
+    an interactive terminal.
+
+    If ``config.local.json`` already declares ``settings.locale``, this is
+    a no-op. If not and ``stdin`` is a TTY, runs ``scripts/setup.py``;
+    otherwise returns silently (callers fall back to system locale).
+
+    If the wizard exits non-zero (cancelled, write failure, etc.), emits
+    a canonical JSON error on stdout and ``sys.exit(rc)`` so the active
+    command does NOT continue with incomplete config.
+    """
+    local = _safe_load_json(LOCAL_PATH)
+    locale_value = (local.get("settings") or {}).get("locale")
+    if isinstance(locale_value, str) and locale_value.strip():
+        return
+    if not sys.stdin.isatty():
+        return
+    setup_script = SKILL_DIR / "scripts" / "setup.py"
+    if not setup_script.exists():
+        return
+    rc = subprocess.call([resolve_python(), str(setup_script)])
+    clear_cache()
+    if rc != 0:
+        json.dump(
+            {
+                "status": "error",
+                "summary": (
+                    "Codex skill setup did not complete (exit code "
+                    f"{rc}). Re-run `python scripts/setup.py` to "
+                    "configure the interface locale before invoking "
+                    "the skill again."
+                ),
+                "findings": [],
+                "severity": "high",
+                "confidence": "high",
+                "block_recommended": True,
+            },
+            sys.stdout,
+        )
+        sys.stdout.write("\n")
+        sys.stdout.flush()
+        sys.exit(rc)

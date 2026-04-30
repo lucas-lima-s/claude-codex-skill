@@ -16,6 +16,7 @@ allowed-tools:
   - Bash(*scripts/codex_bg.py*)
   - Bash(*scripts/analyze_plan_complexity.py*)
   - Bash(*scripts/codex_dialogue.py*)
+  - Bash(*scripts/set_locale.py*)
 ---
 
 # Codex — entry point único
@@ -352,6 +353,35 @@ Quando uma chamada do wrapper deve demorar (ex.: `delegate` >60s, `insight`
 A saída de `bg-output` é o JSON canônico do wrapper — apresentar ao
 usuário com a mesma formatação dos modos síncronos (tabela meta + lista
 numerada de findings traduzidos).
+
+## Troca de locale (Claude-side, via `set_locale.py`)
+
+Frases gatilho (pt-BR): "configurar idioma do codex", "trocar idioma do
+codex", "muda o codex pra inglês", "codex em inglês", "codex em pt-br",
+"trocar locale do codex".
+
+Ação:
+
+1. Pergunte via `AskUserQuestion` qual locale: `en-US` ou `pt-BR`.
+2. Invoque via Bash:
+   ```
+   "$SKILLS_PYTHON" "$USERPROFILE/.claude/skills/codex/scripts/set_locale.py" --locale <choice>
+   ```
+   (ou `python` se `$SKILLS_PYTHON` não estiver setado).
+3. Confirme ao usuário: "Idioma do Codex definido como `<choice>`. As
+   próximas chamadas /codex usarão esse idioma (mensagens de UI e
+   respostas do próprio Codex)."
+
+Não tente rodar `setup.py` — ele é interativo (lê `stdin`) e não
+funciona quando Claude o invoca como subprocesso. Use `set_locale.py`
+(não-interativo, aceita `--locale` como flag) para persistir a escolha
+em `config.local.json`. A próxima invocação do wrapper já enxerga o
+novo locale via `detect_locale()`.
+
+Não use `Read` + `Write` para editar `config.local.json` direto: a
+regra global do `CLAUDE.md` proíbe `Write` em arquivos existentes
+(line endings, line-by-line diff). `set_locale.py` faz deep-merge
+correto e preserva chaves não relacionadas ao locale.
 
 ## Saída (comum aos modos individuais)
 

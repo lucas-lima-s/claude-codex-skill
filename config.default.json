@@ -53,6 +53,13 @@
       "default_max_parallel": 4,
       "max_parallel_ceiling": 8,
       "item_safety_timeout_seconds": 900
+    },
+    "credentials": {
+      "source": [
+        "./.env",
+        "~/.claude/credentials.env"
+      ],
+      "propagate": []
     }
   },
 
@@ -109,7 +116,21 @@
       "batch.summary.no_tasks": "Input do batch não tem tarefas.",
       "batch.summary.overlap": "Write-sets sobrepostos; recusando rodar batch-delegate.",
       "batch.summary.worker_crash": "Worker do batch falhou: {exc}",
-      "batch.summary.read_failure": "Não foi possível ler o input do batch: {exc}"
+      "batch.summary.read_failure": "Não foi possível ler o input do batch: {exc}",
+
+      "setup.locale_set": "Idioma definido: {locale}",
+      "setup.validation.header": "Validando ambiente...",
+      "setup.validation.codex_ok": "  [ok] Codex CLI: {version}",
+      "setup.validation.codex_missing": "  [ausente] Codex CLI não está no PATH. Instale: https://github.com/openai/codex",
+      "setup.validation.python_ok": "  [ok] Python: {executable} ({version})",
+      "setup.validation.python_warn_skills_python": "  [aviso] $SKILLS_PYTHON não definido; usando fallback: {executable}",
+      "setup.validation.credentials_header": "  [ok] Credenciais propagadas: {list}",
+      "setup.validation.credentials_none": "  [info] Nenhuma credencial configurada para propagação.\n  Para liberar API keys ao Codex (ex.: GITHUB_TOKEN, OPENAI_API_KEY),\n  edite config.local.json. Exemplo:\n      {\"settings\":{\"credentials\":{\"propagate\":[\"GITHUB_TOKEN\"]}}}",
+      "setup.validation.credentials_missing_warn": "  [aviso] {key} listada em propagate mas não encontrada nas fontes de credenciais",
+      "setup.validation.credentials_hint": "  Dica: edite settings.credentials.propagate em config.local.json para mudar quais chaves vão para o subprocesso do Codex.",
+      "setup.complete": "Setup concluído. Rode `python scripts/setup.py` novamente para trocar o idioma.",
+
+      "prompt.language_directive": "Todos os campos free-text na sua resposta JSON (summary, findings[].title, findings[].detail, questions[].question, questions[].context) DEVEM estar em Português (pt-BR). Identificadores de código, caminhos de arquivo, códigos de erro e termos técnicos mantêm a forma original."
     },
 
     "en-US": {
@@ -164,7 +185,21 @@
       "batch.summary.no_tasks": "Batch input has no tasks.",
       "batch.summary.overlap": "Write-sets overlap; refusing to run batch-delegate.",
       "batch.summary.worker_crash": "Batch worker crashed: {exc}",
-      "batch.summary.read_failure": "Could not read batch input: {exc}"
+      "batch.summary.read_failure": "Could not read batch input: {exc}",
+
+      "setup.locale_set": "Language set to: {locale}",
+      "setup.validation.header": "Validating environment...",
+      "setup.validation.codex_ok": "  [ok] Codex CLI: {version}",
+      "setup.validation.codex_missing": "  [missing] Codex CLI not found in PATH. Install: https://github.com/openai/codex",
+      "setup.validation.python_ok": "  [ok] Python: {executable} ({version})",
+      "setup.validation.python_warn_skills_python": "  [warn] $SKILLS_PYTHON not set; falling back to: {executable}",
+      "setup.validation.credentials_header": "  [ok] Credentials propagated: {list}",
+      "setup.validation.credentials_none": "  [info] No credentials configured for propagation.\n  To grant Codex access to API keys (e.g. GITHUB_TOKEN, OPENAI_API_KEY),\n  edit config.local.json. Example:\n      {\"settings\":{\"credentials\":{\"propagate\":[\"GITHUB_TOKEN\"]}}}",
+      "setup.validation.credentials_missing_warn": "  [warn] {key} listed in propagate but not found in credentials sources",
+      "setup.validation.credentials_hint": "  Tip: edit settings.credentials.propagate in config.local.json to change which keys are forwarded to the Codex subprocess.",
+      "setup.complete": "Setup complete. Re-run `python scripts/setup.py` to change the language.",
+
+      "prompt.language_directive": "All free-text fields in your JSON response (summary, findings[].title, findings[].detail, questions[].question, questions[].context) MUST be written in English (en-US). Code identifiers, file paths, error codes, and technical terms keep their original form."
     }
   }
 }

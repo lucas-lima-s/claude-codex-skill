@@ -40,7 +40,13 @@ Environment overrides:
   * ``CODEX_WRAPPER_USE_JSON_STREAM``   — ``1`` adds ``--json`` (experimental).
   * ``CODEX_WRAPPER_TELEMETRY_DISABLED``— ``1`` skips writing ``cache/runs.jsonl``.
   * ``CLAUDE_AUTOMATION_PYTHON`` / ``SKILLS_PYTHON`` — Python interpreter.
-  * ``COMPOSIO_API_KEY``                — loaded from ``~/.claude/credentials.env``.
+  * Credentials propagated to the Codex subprocess are declared in
+    ``settings.credentials.propagate`` (config-driven). Keys listed
+    there are loaded from ``settings.credentials.source`` (an ordered
+    list defaulting to ``./.env`` then ``~/.claude/credentials.env``)
+    and injected as env vars. Variables already present in the parent
+    process environment are inherited as in any POSIX subprocess,
+    independently of ``propagate``.
 """
 from __future__ import annotations
 
@@ -67,7 +73,12 @@ COLLECT_SCRIPT = BIN_DIR / "collect_claude_context.py"
 # Make sibling helpers importable before the module-level constants run, so
 # the config-driven defaults below can call ``_config_get`` directly.
 sys.path.insert(0, str(BIN_DIR))
-from codex_config import get as _config_get, t  # noqa: E402
+from codex_config import (  # noqa: E402
+    ensure_setup_complete,
+    get as _config_get,
+    resolve_python as _resolve_python,
+    t,
+)
 
 CACHE_DIR = SKILL_DIR / "cache"
 TELEMETRY_FILE = CACHE_DIR / "runs.jsonl"
@@ -144,28 +155,47 @@ def _read_json_safely(path: Optional[Path]) -> Dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
-def _resolve_python() -> str:
-    for env_name in ("SKILLS_PYTHON", "CLAUDE_AUTOMATION_PYTHON"):
-        candidate = os.environ.get(env_name)
-        if candidate and Path(candidate).exists():
-            return candidate
-    return sys.executable
-
-
 def _codex_child_env() -> Dict[str, str]:
     env = os.environ.copy()
-    if env.get("COMPOSIO_API_KEY"):
+    propagate = _config_get("credentials.propagate", []) or []
+    if not propagate:
         return env
-    credentials = Path.home() / ".claude" / "credentials.env"
-    if not credentials.exists():
+
+    raw_sources = _config_get("credentials.source", "~/.claude/credentials.env")
+    if isinstance(raw_sources, str):
+        raw_sources = [raw_sources]
+    elif not isinstance(raw_sources, list):
         return env
-    try:
-        for line in credentials.read_text(encoding="utf-8").splitlines():
-            if line.startswith("COMPOSIO_API_KEY="):
-                env["COMPOSIO_API_KEY"] = line.split("=", 1)[1]
-                break
-    except OSError:
-        pass
+
+    file_kv: Dict[str, str] = {}
+    for raw in raw_sources:
+        if not isinstance(raw, str):
+            continue
+        path_str = os.path.expanduser(raw)
+        path = Path(path_str)
+        if not path.is_absolute():
+            path = SKILL_DIR / path_str
+        if not path.exists():
+            continue
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            continue
+        for line in lines:
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#") or "=" not in stripped:
+                continue
+            key, _, value = stripped.partition("=")
+            key = key.strip()
+            if key and key not in file_kv:  # first source wins
+                file_kv[key] = value
+    for name in propagate:
+        if not isinstance(name, str):
+            continue
+        if env.get(name):  # already set in parent env, don't overwrite
+            continue
+        if name in file_kv:
+            env[name] = file_kv[name]
     return env
 
 
@@ -208,6 +238,10 @@ def _build_prompt(
         "`status=\"needs_input\"` and provide concrete `questions` "
         "(each as {id, question, context}).\n"
     )
+
+    language_directive = t("prompt.language_directive")
+    if language_directive and language_directive != "prompt.language_directive":
+        header += "\n" + language_directive + "\n"
 
     if mode == "plan-review":
         body = (
@@ -812,6 +846,10 @@ def _assemble_user_payload(args: argparse.Namespace) -> str:
 
 def main(argv: Optional[List[str]] = None) -> int:
     args = _parse_cli(argv)
+    # All wrapper modes (ask, verify, plan-review, delegate, insight) are
+    # active — none are passive. Setup wizard is auto-triggered (only in
+    # TTY) before any Codex invocation when locale is unset.
+    ensure_setup_complete()
     started_at = time.monotonic()
     started_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
     run_id = uuid.uuid4().hex[:12]

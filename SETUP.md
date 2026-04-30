@@ -2,14 +2,56 @@
 
 Ponte Claude Code → Codex CLI. Único ponto de entrada para automação.
 
+Suportado em Windows, Linux e macOS via Python 3.10+.
+
 ## Requisitos
 
 - Codex CLI instalado e no `PATH` (`codex --version` deve responder).
 - Python disponível via `$SKILLS_PYTHON` (preferido), `$CLAUDE_AUTOMATION_PYTHON`,
   ou simplesmente `python`/`python3` no `PATH`.
-- Credencial `COMPOSIO_API_KEY` no arquivo global `~/.claude/credentials.env`
-  (lida automaticamente pelo wrapper para o subprocesso do Codex; nunca é
-  exibida em logs).
+- (Opcional) Credenciais para o subprocesso do Codex em
+  `~/.claude/credentials.env` (global) ou `.env` na raiz da skill (override
+  per-skill), formato `KEY=value`. Apenas as chaves listadas em
+  `settings.credentials.propagate` (em `config.local.json`) são injetadas
+  no env do Codex a partir desses arquivos; valores nunca aparecem em
+  logs. **Importante**: variáveis já presentes no ambiente do processo
+  pai (shell do usuário, Claude Code) são herdadas como qualquer
+  subprocesso POSIX, independentemente de `propagate`. Para isolamento
+  total, invoque com `env -i` ou seu equivalente.
+
+## Primeira execução
+
+Rode o wizard interativo:
+
+    python scripts/setup.py
+
+Ele pergunta o idioma da interface (`en-US` ou `pt-BR`), valida o
+ambiente (Codex CLI, Python) e lista as credenciais que serão propagadas
+para o subprocesso do Codex (sem expor valores). A preferência fica em
+`config.local.json` (gitignored). Toda saída do wizard vai para
+**stderr** — stdout permanece reservado para o JSON canônico do
+wrapper, então o auto-trigger no primeiro uso interativo não quebra
+parsers.
+
+Para trocar o idioma depois, re-rode o mesmo comando, ou use o helper
+não-interativo:
+
+    python scripts/set_locale.py --locale en-US
+
+**BREAKING CHANGE em relação à versão anterior**: até esta versão,
+`COMPOSIO_API_KEY` era propagada automaticamente. Agora a propagação é
+declarativa e o default é vazio (nenhuma credencial é enviada ao
+subprocesso a partir dos arquivos `source`). Se você dependia desse
+comportamento, adicione no seu `config.local.json`:
+
+    {"settings": {"credentials": {"propagate": ["COMPOSIO_API_KEY"]}}}
+
+Para usar `.env` per-skill como fonte primária:
+
+    {"settings": {"credentials": {
+      "source": ["./.env", "~/.claude/credentials.env"],
+      "propagate": ["GITHUB_TOKEN"]
+    }}}
 
 ## Variáveis de ambiente reconhecidas
 
