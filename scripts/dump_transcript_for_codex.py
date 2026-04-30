@@ -15,7 +15,6 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import List, Optional
 
 
 def _slug_from_cwd(cwd: str) -> str:
@@ -28,7 +27,7 @@ def _slug_from_cwd(cwd: str) -> str:
     return s
 
 
-def _find_latest_transcript(cwd: str) -> Optional[Path]:
+def _find_latest_transcript(cwd: str) -> Path | None:
     projects_root = Path(os.path.expanduser("~/.claude/projects"))
     slug = _slug_from_cwd(cwd)
     candidate_dir = projects_root / slug
@@ -43,7 +42,7 @@ def _extract_text(content) -> str:
         return content.strip()
     if not isinstance(content, list):
         return ""
-    parts: List[str] = []
+    parts: list[str] = []
     for item in content:
         if not isinstance(item, dict):
             continue
@@ -62,8 +61,8 @@ def _extract_text(content) -> str:
     return "\n".join(parts).strip()
 
 
-def _read_turns(path: Path, last_turns: int) -> List[str]:
-    turns: List[str] = []
+def _read_turns(path: Path, last_turns: int) -> list[str]:
+    turns: list[str] = []
     with path.open(encoding="utf-8", errors="replace") as fh:
         for line in fh:
             try:
@@ -84,7 +83,7 @@ def _read_turns(path: Path, last_turns: int) -> List[str]:
     return turns
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0] if __doc__ else None)
     parser.add_argument("--cwd", required=True, help="current working directory; used to find the session slug")
     parser.add_argument("--last-turns", type=int, default=10, help="keep only the last N turns (0 = all)")
@@ -93,7 +92,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     args = parser.parse_args(argv)
 
     if args.transcript_path:
-        jsonl_path: Optional[Path] = Path(args.transcript_path)
+        jsonl_path: Path | None = Path(args.transcript_path)
         if not jsonl_path.is_file():
             jsonl_path = None
     else:

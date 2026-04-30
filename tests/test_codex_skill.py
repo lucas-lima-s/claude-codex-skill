@@ -21,7 +21,7 @@ import tempfile
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 # Make sure prints survive on Windows consoles (cp1252 default).
 try:
@@ -57,7 +57,7 @@ class Runner:
     def __init__(self) -> None:
         self.passed = 0
         self.failed = 0
-        self.failures: List[str] = []
+        self.failures: list[str] = []
 
     def section(self, name: str) -> None:
         print(f"\n=== {name} ===")
@@ -111,7 +111,7 @@ class Runner:
 # ----------------------------------------------------------------------- helpers
 
 def _base_env(behavior: str = "success", timeout: str = "10",
-              extra: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+              extra: dict[str, str] | None = None) -> dict[str, str]:
     env = os.environ.copy()
     env["CODEX_WRAPPER_CODEX_OVERRIDE"] = str(FAKE)
     env["CODEX_WRAPPER_TIMEOUT_SECONDS"] = timeout
@@ -123,10 +123,10 @@ def _base_env(behavior: str = "success", timeout: str = "10",
     return env
 
 
-def _run_wrapper(mode: str, behavior: str, args: List[str],
+def _run_wrapper(mode: str, behavior: str, args: list[str],
                  timeout_env: str = "10",
-                 extra_env: Optional[Dict[str, str]] = None,
-                 hard_timeout: float = 30.0) -> Tuple[Dict[str, Any], str, float]:
+                 extra_env: dict[str, str] | None = None,
+                 hard_timeout: float = 30.0) -> tuple[dict[str, Any], str, float]:
     """Returns (parsed_json_result, stderr, wall_clock_seconds)."""
     env = _base_env(behavior=behavior, timeout=timeout_env, extra=extra_env)
     cmd = [PYTHON, str(WRAPPER), mode] + args

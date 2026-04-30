@@ -21,7 +21,7 @@ import tempfile
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 try:
     sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[attr-defined]
@@ -55,7 +55,7 @@ class Runner:
     def __init__(self) -> None:
         self.passed = 0
         self.failed = 0
-        self.failures: List[str] = []
+        self.failures: list[str] = []
 
     def section(self, name: str) -> None:
         print(f"\n=== {name} ===")
@@ -107,7 +107,7 @@ class Runner:
 # ----------------------------------------------------------------------- helpers
 
 def _bg_env(behavior: str = "success",
-            extra: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+            extra: dict[str, str] | None = None) -> dict[str, str]:
     """Env passed to the codex_bg subprocess; the spawned wrapper child
     inherits these (in particular CODEX_WRAPPER_CODEX_OVERRIDE).
 
@@ -125,8 +125,8 @@ def _bg_env(behavior: str = "success",
     return env
 
 
-def _run_bg(args: List[str], env: Optional[Dict[str, str]] = None,
-            timeout: float = 30.0) -> Tuple[Dict[str, Any], str]:
+def _run_bg(args: list[str], env: dict[str, str] | None = None,
+            timeout: float = 30.0) -> tuple[dict[str, Any], str]:
     cmd = [PYTHON, str(BG_SCRIPT), *args]
     proc = subprocess.run(
         cmd, env=env or os.environ.copy(), capture_output=True,
@@ -139,12 +139,12 @@ def _run_bg(args: List[str], env: Optional[Dict[str, str]] = None,
     return result, proc.stderr
 
 
-def _wait_for_done(run_id: str, env: Dict[str, str],
+def _wait_for_done(run_id: str, env: dict[str, str],
                    max_wait: float = 30.0,
-                   poll_interval: float = 0.5) -> Dict[str, Any]:
+                   poll_interval: float = 0.5) -> dict[str, Any]:
     """Polls bg-status until status != running (or timeout)."""
     deadline = time.monotonic() + max_wait
-    last: Dict[str, Any] = {}
+    last: dict[str, Any] = {}
     while time.monotonic() < deadline:
         last, _ = _run_bg(["status", run_id], env=env)
         if last.get("status") != "running":
@@ -297,7 +297,7 @@ def test_list_orders_runs(r: Runner) -> None:
         plan.write_text("list test\n", encoding="utf-8")
         env = _bg_env(behavior="success")
 
-        run_ids: List[str] = []
+        run_ids: list[str] = []
         for i in range(3):
             res, _ = _run_bg(
                 ["start", "plan-review",

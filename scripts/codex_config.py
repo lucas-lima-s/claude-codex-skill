@@ -22,7 +22,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 SKILL_DIR = Path(__file__).resolve().parent.parent
 DEFAULTS_PATH = SKILL_DIR / "config.default.json"
@@ -30,11 +30,11 @@ LOCAL_PATH = SKILL_DIR / "config.local.json"
 
 DEFAULT_LOCALE = "pt-BR"
 
-_cached_config: Optional[Dict[str, Any]] = None
-_cached_locale: Optional[str] = None
+_cached_config: dict[str, Any] | None = None
+_cached_locale: str | None = None
 
 
-def _safe_load_json(path: Path) -> Dict[str, Any]:
+def _safe_load_json(path: Path) -> dict[str, Any]:
     try:
         text = path.read_text(encoding="utf-8")
     except (FileNotFoundError, OSError, UnicodeDecodeError):
@@ -46,7 +46,7 @@ def _safe_load_json(path: Path) -> Dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
-def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     """Recursively merge ``override`` into ``base`` (in-place on a copy)."""
     out = dict(base)
     for key, value in override.items():
@@ -61,7 +61,7 @@ def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any
     return out
 
 
-def _load_config() -> Dict[str, Any]:
+def _load_config() -> dict[str, Any]:
     global _cached_config
     if _cached_config is not None:
         return _cached_config
@@ -164,7 +164,7 @@ def t(key: str, **kwargs: Any) -> str:
         locales = {}
 
     target = detect_locale()
-    template: Optional[str] = None
+    template: str | None = None
     for candidate in _candidate_locales(target):
         bucket = locales.get(candidate)
         if isinstance(bucket, dict) and isinstance(bucket.get(key), str):

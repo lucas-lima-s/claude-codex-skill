@@ -45,7 +45,7 @@ import json
 import re
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from codex_config import get as _config_get, t  # noqa: E402
@@ -79,7 +79,7 @@ CROSS_MODULE_DIRS = tuple(_config_get(
 ))
 
 
-def _emit(payload: Dict[str, Any]) -> None:
+def _emit(payload: dict[str, Any]) -> None:
     text = json.dumps(payload, ensure_ascii=False)
     try:
         sys.stdout.buffer.write(text.encode("utf-8"))
@@ -87,7 +87,7 @@ def _emit(payload: Dict[str, Any]) -> None:
         sys.stdout.write(text)
 
 
-def _safe_failure(reason: str) -> Dict[str, Any]:
+def _safe_failure(reason: str) -> dict[str, Any]:
     return {"score": 0, "suggest_iterative": False, "reasons": [reason]}
 
 
@@ -106,9 +106,9 @@ def _count_phases(text: str) -> int:
     return len(PHASE_HEADING_RE.findall(text))
 
 
-def _sensitive_keywords_hit(text: str) -> List[str]:
+def _sensitive_keywords_hit(text: str) -> list[str]:
     lowered = text.lower()
-    hits: List[str] = []
+    hits: list[str] = []
     for kw in SENSITIVE_KEYWORDS:
         # Match as whole word to avoid false positives like "deployment"
         # being driven by "deploy" plus extra letters; \b handles Unicode
@@ -118,16 +118,16 @@ def _sensitive_keywords_hit(text: str) -> List[str]:
     return hits
 
 
-def _cross_module_hits(text: str) -> List[str]:
+def _cross_module_hits(text: str) -> list[str]:
     lowered = text.lower()
-    hits: List[str] = []
+    hits: list[str] = []
     for d in CROSS_MODULE_DIRS:
         if re.search(rf"\b{re.escape(d)}\b", lowered):
             hits.append(d)
     return hits
 
 
-def _score_plan(plan_path: Path) -> Tuple[int, List[str]]:
+def _score_plan(plan_path: Path) -> tuple[int, list[str]]:
     try:
         text = plan_path.read_text(encoding="utf-8", errors="replace")
     except (OSError, UnicodeDecodeError) as exc:
@@ -140,7 +140,7 @@ def _score_plan(plan_path: Path) -> Tuple[int, List[str]]:
         size_bytes = len(text.encode("utf-8"))
 
     score = 0
-    reasons: List[str] = []
+    reasons: list[str] = []
 
     if size_bytes > SIZE_THRESHOLD_BYTES:
         score += 1
@@ -183,7 +183,7 @@ def _score_plan(plan_path: Path) -> Tuple[int, List[str]]:
     return score, reasons
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=t("complexity.cli.description"),
     )

@@ -29,7 +29,7 @@ import subprocess
 import sys
 from collections import OrderedDict
 from pathlib import Path
-from typing import List, Optional, Tuple
+
 
 DEFAULT_MAX_FILES = 12
 DEFAULT_MAX_LINES = 300
@@ -60,11 +60,11 @@ def _read_text_safely(path: Path) -> str:
             return ""
 
 
-def _resolve_cited(token: str, cwd: Path, target_path: Optional[Path]) -> Optional[Path]:
+def _resolve_cited(token: str, cwd: Path, target_path: Path | None) -> Path | None:
     candidate = token.replace("\\", "/")
     if candidate.startswith(("./", "../")):
         candidate = candidate[2:] if candidate.startswith("./") else candidate
-    bases: List[Path] = []
+    bases: list[Path] = []
     if target_path is not None:
         bases.append(target_path)
     bases.append(cwd)
@@ -94,13 +94,13 @@ class _CitedEntry:
 
 
 def _detect_cited_files(
-    plan_text: str, cwd: Path, target_path: Optional[Path]
-) -> "OrderedDict[Path, _CitedEntry]":
+    plan_text: str, cwd: Path, target_path: Path | None
+) -> OrderedDict[Path, _CitedEntry]:
     """Resolve every plausible file reference in ``plan_text``.
 
     Iteration order matches first mention so callers can apply the priority rules.
     """
-    found: "OrderedDict[Path, _CitedEntry]" = OrderedDict()
+    found: OrderedDict[Path, _CitedEntry] = OrderedDict()
     index = 0
     for match in PATH_TOKEN_RE.finditer(plan_text):
         token = match.group(1)
@@ -123,8 +123,8 @@ def _detect_cited_files(
 
 
 def _select_files(
-    cited: "OrderedDict[Path, _CitedEntry]", limit: int
-) -> Tuple[List[Path], List[Path]]:
+    cited: OrderedDict[Path, _CitedEntry], limit: int
+) -> tuple[list[Path], list[Path]]:
     """Return (selected, skipped) honouring the documented priority rules."""
     if not cited:
         return [], []
@@ -142,8 +142,8 @@ def _select_files(
 
 
 def _file_window(
-    text: str, cited_lines: List[int], max_lines: int
-) -> Tuple[List[Tuple[int, str]], int, str]:
+    text: str, cited_lines: list[int], max_lines: int
+) -> tuple[list[tuple[int, str]], int, str]:
     """Return ([(line_no, line_content), ...], total_lines, selection_reason)."""
     raw_lines = text.splitlines()
     total = len(raw_lines)
@@ -188,7 +188,7 @@ def _git_status(cwd: Path) -> str:
     return (proc.stdout or "").rstrip()
 
 
-def _collect_context(cwd: Path, target_path: Optional[Path]) -> str:
+def _collect_context(cwd: Path, target_path: Path | None) -> str:
     helper = Path(__file__).resolve().parent / "collect_claude_context.py"
     python = os.environ.get("SKILLS_PYTHON") or os.environ.get("CLAUDE_AUTOMATION_PYTHON") or sys.executable
     cmd = [python, str(helper), "--cwd", str(cwd), "--format", "text"]
@@ -210,12 +210,12 @@ def _format_section_header(title: str) -> str:
 def _build_packet(
     plan_text: str,
     cwd: Path,
-    target_path: Optional[Path],
+    target_path: Path | None,
     transcript_text: str,
     max_files: int,
     max_lines: int,
     max_bytes: int,
-) -> Tuple[str, List[str]]:
+) -> tuple[str, list[str]]:
     cited = _detect_cited_files(plan_text, cwd, target_path)
     selected, skipped = _select_files(cited, max_files)
 
@@ -223,8 +223,8 @@ def _build_packet(
     status_short = _git_status(cwd)
     context_text = _collect_context(cwd, target_path)
 
-    parts: List[str] = []
-    manifest: List[str] = []
+    parts: list[str] = []
+    manifest: list[str] = []
 
     parts.append("# Plan-review packet")
     parts.append(_format_section_header("Plan"))
@@ -310,7 +310,7 @@ def _build_packet(
     return body, manifest
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Build a plan-review packet.")
     parser.add_argument("--plan-file", required=True)
     parser.add_argument("--cwd", required=True)

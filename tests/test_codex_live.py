@@ -34,7 +34,7 @@ import time
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 try:
     sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[attr-defined]
@@ -58,7 +58,7 @@ class Runner:
         self.passed = 0
         self.failed = 0
         self.skipped = 0
-        self.failures: List[str] = []
+        self.failures: list[str] = []
         self.token_proxy_bytes = 0
         self.total_seconds = 0.0
 
@@ -97,14 +97,14 @@ class Runner:
             short = (haystack[:200] + "...") if isinstance(haystack, str) and len(haystack) > 200 else haystack
             self.fail(label, f"{needle!r} not found in {short!r}")
 
-    def in_any(self, needles: List[str], haystack: str, label: str) -> None:
+    def in_any(self, needles: list[str], haystack: str, label: str) -> None:
         if any(n in haystack for n in needles):
             self.passed_(label)
         else:
             short = haystack[:200] + "..."
             self.fail(label, f"none of {needles!r} found in {short!r}")
 
-    def status_in(self, result: Dict[str, Any], allowed: tuple, label: str) -> None:
+    def status_in(self, result: dict[str, Any], allowed: tuple, label: str) -> None:
         if result.get("status") in allowed:
             self.passed_(label)
         else:
@@ -114,7 +114,7 @@ class Runner:
 
 # ----------------------------------------------------------------------- helpers
 
-def _live_env(timeout: str = "300") -> Dict[str, str]:
+def _live_env(timeout: str = "300") -> dict[str, str]:
     env = os.environ.copy()
     env.pop("CODEX_WRAPPER_CODEX_OVERRIDE", None)
     env["CODEX_WRAPPER_TIMEOUT_SECONDS"] = timeout
@@ -124,9 +124,9 @@ def _live_env(timeout: str = "300") -> Dict[str, str]:
 
 
 def _run_wrapper(
-    mode: str, args: List[str], timeout: int = 300,
-    extra_env: Optional[Dict[str, str]] = None,
-) -> Tuple[Dict[str, Any], float]:
+    mode: str, args: list[str], timeout: int = 300,
+    extra_env: dict[str, str] | None = None,
+) -> tuple[dict[str, Any], float]:
     cmd = [PYTHON, str(WRAPPER), mode] + args
     env = _live_env(str(timeout))
     if extra_env:
@@ -149,8 +149,8 @@ def _run_wrapper(
     return result, elapsed
 
 
-def _run_batch(sub_mode: str, payload: Dict[str, Any], timeout: int = 600
-              ) -> Tuple[Dict[str, Any], float]:
+def _run_batch(sub_mode: str, payload: dict[str, Any], timeout: int = 600
+              ) -> tuple[dict[str, Any], float]:
     with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False)
         path = f.name

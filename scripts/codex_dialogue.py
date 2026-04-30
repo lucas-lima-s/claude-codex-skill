@@ -58,7 +58,7 @@ import tempfile
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 BIN_DIR = Path(__file__).resolve().parent
 WRAPPER = BIN_DIR / "invoke_codex_with_claude.py"
@@ -82,7 +82,7 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def _emit(payload: Dict[str, Any]) -> None:
+def _emit(payload: dict[str, Any]) -> None:
     text = json.dumps(payload, ensure_ascii=False)
     try:
         sys.stdout.buffer.write(text.encode("utf-8"))
@@ -90,7 +90,7 @@ def _emit(payload: Dict[str, Any]) -> None:
         sys.stdout.write(text)
 
 
-def _resolve_max_turns(cli_value: Optional[int]) -> int:
+def _resolve_max_turns(cli_value: int | None) -> int:
     if cli_value is not None:
         candidate = int(cli_value)
     else:
@@ -106,7 +106,7 @@ def _dialogue_dir(dialogue_id: str) -> Path:
     return Path(tempfile.gettempdir()) / f"{DIALOGUE_PREFIX}{dialogue_id}"
 
 
-def _read_meta(dialogue_dir: Path) -> Optional[Dict[str, Any]]:
+def _read_meta(dialogue_dir: Path) -> dict[str, Any] | None:
     meta_path = dialogue_dir / "meta.json"
     try:
         text = meta_path.read_text(encoding="utf-8")
@@ -119,7 +119,7 @@ def _read_meta(dialogue_dir: Path) -> Optional[Dict[str, Any]]:
     return data if isinstance(data, dict) else None
 
 
-def _write_meta(dialogue_dir: Path, meta: Dict[str, Any]) -> None:
+def _write_meta(dialogue_dir: Path, meta: dict[str, Any]) -> None:
     try:
         (dialogue_dir / "meta.json").write_text(
             json.dumps(meta, ensure_ascii=False, indent=2),
@@ -129,7 +129,7 @@ def _write_meta(dialogue_dir: Path, meta: Dict[str, Any]) -> None:
         pass
 
 
-def _read_findings(dialogue_dir: Path, turn: int) -> Optional[Dict[str, Any]]:
+def _read_findings(dialogue_dir: Path, turn: int) -> dict[str, Any] | None:
     path = dialogue_dir / f"turn_{turn}_findings.json"
     try:
         text = path.read_text(encoding="utf-8")
@@ -142,7 +142,7 @@ def _read_findings(dialogue_dir: Path, turn: int) -> Optional[Dict[str, Any]]:
     return data if isinstance(data, dict) else None
 
 
-def _write_findings(dialogue_dir: Path, turn: int, data: Dict[str, Any]) -> None:
+def _write_findings(dialogue_dir: Path, turn: int, data: dict[str, Any]) -> None:
     try:
         (dialogue_dir / f"turn_{turn}_findings.json").write_text(
             json.dumps(data, ensure_ascii=False, indent=2),
@@ -152,7 +152,7 @@ def _write_findings(dialogue_dir: Path, turn: int, data: Dict[str, Any]) -> None
         pass
 
 
-def _summarise_turn(turn: int, findings_payload: Dict[str, Any]) -> str:
+def _summarise_turn(turn: int, findings_payload: dict[str, Any]) -> str:
     """Produce a short pt-BR summary of a turn for the inline history feed."""
     severity = findings_payload.get("severity", "low")
     findings = findings_payload.get("findings") or []
@@ -182,7 +182,7 @@ def _summarise_turn(turn: int, findings_payload: Dict[str, Any]) -> str:
 
 
 def _build_history(dialogue_dir: Path, up_to_turn: int) -> str:
-    parts: List[str] = []
+    parts: list[str] = []
     for n in range(1, up_to_turn + 1):
         f = _read_findings(dialogue_dir, n)
         if not f:
@@ -192,7 +192,7 @@ def _build_history(dialogue_dir: Path, up_to_turn: int) -> str:
     if len(text.encode("utf-8")) > MAX_HISTORY_BYTES:
         # Trim from the oldest turns first; Codex cares most about the
         # immediately preceding turn.
-        trimmed: List[str] = []
+        trimmed: list[str] = []
         running = 0
         for piece in reversed(parts):
             piece_bytes = len(piece.encode("utf-8"))
@@ -204,7 +204,7 @@ def _build_history(dialogue_dir: Path, up_to_turn: int) -> str:
     return text
 
 
-def _stop_signal(dialogue_dir: Path, meta: Dict[str, Any]) -> Tuple[Optional[str], Dict[str, Any]]:
+def _stop_signal(dialogue_dir: Path, meta: dict[str, Any]) -> tuple[str | None, dict[str, Any]]:
     """Return (stop_reason, details). stop_reason is None when we should
     keep going."""
     if meta.get("status") == "aborted":
@@ -219,7 +219,7 @@ def _stop_signal(dialogue_dir: Path, meta: Dict[str, Any]) -> Tuple[Optional[str
     if current_turn >= 2:
         prev = _read_findings(dialogue_dir, current_turn - 1) or {}
         last = _read_findings(dialogue_dir, current_turn) or {}
-        def _clean(p: Dict[str, Any]) -> bool:
+        def _clean(p: dict[str, Any]) -> bool:
             return (
                 not (p.get("findings") or [])
                 and (p.get("severity") or "low") == "low"
@@ -232,7 +232,7 @@ def _stop_signal(dialogue_dir: Path, meta: Dict[str, Any]) -> Tuple[Optional[str
     if current_turn >= 2:
         prev = _read_findings(dialogue_dir, current_turn - 1) or {}
         last = _read_findings(dialogue_dir, current_turn) or {}
-        def _high_keys(p: Dict[str, Any]) -> set:
+        def _high_keys(p: dict[str, Any]) -> set:
             keys = set()
             for f in p.get("findings") or []:
                 if not isinstance(f, dict):
@@ -255,14 +255,14 @@ def _invoke_wrapper_plan_review(
     cwd: Path,
     dialogue_dir: Path,
     history_text: str,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Run plan-review on the given plan, injecting prior history as
     transcript context. Returns the wrapper's canonical JSON.
 
     History is fed via a transcript file because that path already merges
     cleanly into the prompt builder of the wrapper.
     """
-    transcript_path: Optional[Path] = None
+    transcript_path: Path | None = None
     if history_text.strip():
         transcript_path = dialogue_dir / "history_inline.txt"
         try:
@@ -465,7 +465,7 @@ def cmd_finish(args: argparse.Namespace) -> int:
         _emit({"status": "error", "reason": f"copy_failed: {exc.__class__.__name__}"})
         return 0
 
-    log_lines: List[str] = []
+    log_lines: list[str] = []
     log_lines.append(f"# Dialogue log — {args.dialogue_id}")
     log_lines.append("")
     log_lines.append(f"Started: {meta.get('started_at')}")
@@ -535,7 +535,7 @@ def cmd_finish(args: argparse.Namespace) -> int:
 
 # --------------------------------------------------------------- main
 
-def _parse_cli(argv: Optional[List[str]] = None) -> argparse.Namespace:
+def _parse_cli(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=t("dialogue.cli.description"))
     sub = parser.add_subparsers(dest="subcommand", required=True)
 
@@ -571,7 +571,7 @@ def _parse_cli(argv: Optional[List[str]] = None) -> argparse.Namespace:
 _PASSIVE_SUBCOMMANDS = ("status", "abort", "finish")
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     args = _parse_cli(argv)
     if args.subcommand not in _PASSIVE_SUBCOMMANDS:
         ensure_setup_complete()

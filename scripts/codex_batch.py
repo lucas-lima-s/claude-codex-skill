@@ -47,7 +47,7 @@ import tempfile
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 BIN_DIR = Path(__file__).resolve().parent
 WRAPPER = BIN_DIR / "invoke_codex_with_claude.py"
@@ -65,8 +65,8 @@ MAX_PARALLEL_CEILING = int(_config_get("batch.max_parallel_ceiling", 8))
 ITEM_SAFETY_TIMEOUT = int(_config_get("batch.item_safety_timeout_seconds", 900))
 
 
-def _normalize_paths(paths: List[str], base: Path) -> List[Path]:
-    out: List[Path] = []
+def _normalize_paths(paths: list[str], base: Path) -> list[Path]:
+    out: list[Path] = []
     for p in paths:
         if not isinstance(p, str) or not p.strip():
             continue
@@ -81,19 +81,19 @@ def _normalize_paths(paths: List[str], base: Path) -> List[Path]:
 
 
 def _validate_disjoint_write_sets(
-    tasks: List[Dict[str, Any]]
-) -> Optional[List[Dict[str, Any]]]:
+    tasks: list[dict[str, Any]]
+) -> list[dict[str, Any]] | None:
     """Return None when no overlap, else a list of overlap descriptors.
 
     Each descriptor: {ids: [a, b], path: <conflict>}.
     """
-    items: List[Tuple[str, List[Path]]] = []
+    items: list[tuple[str, list[Path]]] = []
     for task in tasks:
         cwd = Path(task.get("cwd") or os.getcwd()).resolve()
         write_set = _normalize_paths(task.get("write_set") or [], cwd)
         items.append((str(task.get("id") or ""), write_set))
 
-    overlaps: List[Dict[str, Any]] = []
+    overlaps: list[dict[str, Any]] = []
     for i in range(len(items)):
         for j in range(i + 1, len(items)):
             a_id, a_paths = items[i]
@@ -105,7 +105,7 @@ def _validate_disjoint_write_sets(
 
 
 def _check_write_set_violation(
-    declared: List[Path], reported: Dict[str, List[str]], base: Path
+    declared: list[Path], reported: dict[str, list[str]], base: Path
 ) -> bool:
     declared_set = set(declared)
     if not declared_set:
@@ -125,8 +125,8 @@ def _check_write_set_violation(
 
 
 def _run_wrapper(
-    sub_mode: str, task: Dict[str, Any], batch_id: str
-) -> Tuple[str, Dict[str, Any]]:
+    sub_mode: str, task: dict[str, Any], batch_id: str
+) -> tuple[str, dict[str, Any]]:
     """Run one wrapper invocation. Returns (id, result_dict)."""
     task_id = str(task.get("id") or uuid.uuid4().hex[:8])
     cwd = task.get("cwd") or os.getcwd()
@@ -179,7 +179,7 @@ def _run_wrapper(
         except json.JSONDecodeError:
             wrapper_result = {}
 
-        item: Dict[str, Any] = {
+        item: dict[str, Any] = {
             "status": wrapper_result.get("status", "error"),
             "summary": wrapper_result.get("summary", "")[:500],
             "duration_seconds": time.monotonic() - started,
@@ -205,7 +205,7 @@ def _run_wrapper(
             pass
 
 
-def _run_batch(sub_mode: str, batch: Dict[str, Any]) -> Dict[str, Any]:
+def _run_batch(sub_mode: str, batch: dict[str, Any]) -> dict[str, Any]:
     tasks = batch.get("tasks") or []
     if not isinstance(tasks, list) or not tasks:
         return {
@@ -229,7 +229,7 @@ def _run_batch(sub_mode: str, batch: Dict[str, Any]) -> Dict[str, Any]:
 
     batch_id = uuid.uuid4().hex[:10]
 
-    items: List[Dict[str, Any]] = []
+    items: list[dict[str, Any]] = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_parallel) as pool:
         futures = {
             pool.submit(_run_wrapper, sub_mode, task, batch_id): task
@@ -258,7 +258,7 @@ def _run_batch(sub_mode: str, batch: Dict[str, Any]) -> Dict[str, Any]:
     else:
         agg_status = "ok"
 
-    summary_parts: List[str] = []
+    summary_parts: list[str] = []
     ok_count = sum(1 for i in items if i.get("status") == "ok")
     err_count = sum(1 for i in items if i.get("status") == "error")
     needs_count = sum(1 for i in items if i.get("status") == "needs_input")
@@ -281,7 +281,7 @@ def _run_batch(sub_mode: str, batch: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=t("batch.cli.description"))
     parser.add_argument(
         "sub_mode",

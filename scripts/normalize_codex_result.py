@@ -28,7 +28,7 @@ import json
 import re
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from codex_config import t  # noqa: E402
@@ -42,9 +42,9 @@ FENCED_JSON_RE = re.compile(r"```json\s*(\{.*?\})\s*```", re.DOTALL)
 LOOSE_JSON_RE = re.compile(r"(\{.*\})", re.DOTALL)
 
 
-def _extract_json_object(raw: str) -> Optional[Dict[str, Any]]:
+def _extract_json_object(raw: str) -> dict[str, Any] | None:
     """Try to parse a JSON object out of ``raw``. Returns None on failure."""
-    candidates: List[str] = []
+    candidates: list[str] = []
     stripped = raw.strip()
     if stripped.startswith("{"):
         candidates.append(stripped)
@@ -70,10 +70,10 @@ def _clamp_enum(value: Any, allowed: tuple, default: str) -> str:
     return default
 
 
-def _normalize_findings(raw_findings: Any) -> List[Dict[str, str]]:
+def _normalize_findings(raw_findings: Any) -> list[dict[str, str]]:
     if not isinstance(raw_findings, list):
         return []
-    out: List[Dict[str, str]] = []
+    out: list[dict[str, str]] = []
     for item in raw_findings:
         if not isinstance(item, dict):
             continue
@@ -95,7 +95,7 @@ def _normalize_findings(raw_findings: Any) -> List[Dict[str, str]]:
     return out
 
 
-def _compute_fingerprint(findings: List[Dict[str, str]], severity: str, block_recommended: bool) -> str:
+def _compute_fingerprint(findings: list[dict[str, str]], severity: str, block_recommended: bool) -> str:
     if not findings:
         return ""
     canonical = [
@@ -121,7 +121,7 @@ def _compute_fingerprint(findings: List[Dict[str, str]], severity: str, block_re
     return digest[:16]
 
 
-def _build_defaults(mode: str, raw: str) -> Dict[str, Any]:
+def _build_defaults(mode: str, raw: str) -> dict[str, Any]:
     return {
         "status": "ok",
         "severity": "low",
@@ -135,7 +135,7 @@ def _build_defaults(mode: str, raw: str) -> Dict[str, Any]:
     }
 
 
-def normalize(raw: str, mode: str) -> Dict[str, Any]:
+def normalize(raw: str, mode: str) -> dict[str, Any]:
     if mode not in ALL_MODES:
         raise ValueError(f"unknown mode: {mode!r}")
 

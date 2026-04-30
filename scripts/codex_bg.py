@@ -57,7 +57,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 BIN_DIR = Path(__file__).resolve().parent
 SKILL_DIR = BIN_DIR.parent
@@ -83,7 +83,7 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def _emit(payload: Dict[str, Any]) -> None:
+def _emit(payload: dict[str, Any]) -> None:
     text = json.dumps(payload, ensure_ascii=False)
     try:
         sys.stdout.buffer.write(text.encode("utf-8"))
@@ -91,7 +91,7 @@ def _emit(payload: Dict[str, Any]) -> None:
         sys.stdout.write(text)
 
 
-def _read_meta(run_dir: Path) -> Optional[Dict[str, Any]]:
+def _read_meta(run_dir: Path) -> dict[str, Any] | None:
     meta_path = run_dir / "meta.json"
     try:
         text = meta_path.read_text(encoding="utf-8")
@@ -104,7 +104,7 @@ def _read_meta(run_dir: Path) -> Optional[Dict[str, Any]]:
     return data if isinstance(data, dict) else None
 
 
-def _write_meta(run_dir: Path, meta: Dict[str, Any]) -> None:
+def _write_meta(run_dir: Path, meta: dict[str, Any]) -> None:
     try:
         (run_dir / "meta.json").write_text(
             json.dumps(meta, ensure_ascii=False, indent=2),
@@ -152,7 +152,7 @@ def _kill_process_tree(pid: int) -> None:
         pass
 
 
-def _resolve_status(run_dir: Path, meta: Dict[str, Any]) -> Tuple[str, bool]:
+def _resolve_status(run_dir: Path, meta: dict[str, Any]) -> tuple[str, bool]:
     """Returns (status, pid_alive). Updates meta in place when terminal."""
     pid = int(meta.get("pid") or 0)
     pid_alive = _is_pid_alive(pid)
@@ -183,10 +183,10 @@ def _resolve_status(run_dir: Path, meta: Dict[str, Any]) -> Tuple[str, bool]:
     return status, False
 
 
-def _list_active_run_ids() -> List[str]:
+def _list_active_run_ids() -> list[str]:
     if not CACHE_DIR.exists():
         return []
-    active: List[str] = []
+    active: list[str] = []
     for run_dir in CACHE_DIR.iterdir():
         if not run_dir.is_dir():
             continue
@@ -223,7 +223,7 @@ def _cleanup_old_runs(max_age_days: int = DEFAULT_CLEANUP_MAX_AGE_DAYS) -> None:
             shutil.rmtree(run_dir, ignore_errors=True)
 
 
-def _resolve_max_concurrent(cli_value: Optional[int]) -> int:
+def _resolve_max_concurrent(cli_value: int | None) -> int:
     if cli_value is not None:
         return max(1, int(cli_value))
     env_value = os.environ.get("CODEX_BG_MAX_CONCURRENT")
@@ -434,7 +434,7 @@ def cmd_cancel(args: argparse.Namespace) -> int:
 
 def cmd_list(args: argparse.Namespace) -> int:
     _cleanup_old_runs()
-    runs: List[Dict[str, Any]] = []
+    runs: list[dict[str, Any]] = []
     if CACHE_DIR.exists():
         for run_dir in CACHE_DIR.iterdir():
             if not run_dir.is_dir():
@@ -460,7 +460,7 @@ def cmd_list(args: argparse.Namespace) -> int:
 
 # --------------------------------------------------------------------- main
 
-def _parse_cli(argv: Optional[List[str]] = None) -> argparse.Namespace:
+def _parse_cli(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=t("bg.cli.description"))
     sub = parser.add_subparsers(dest="subcommand", required=True)
 
@@ -500,7 +500,7 @@ def _parse_cli(argv: Optional[List[str]] = None) -> argparse.Namespace:
 _PASSIVE_SUBCOMMANDS = ("status", "output", "cancel", "list")
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     args = _parse_cli(argv)
     if args.subcommand not in _PASSIVE_SUBCOMMANDS:
         ensure_setup_complete()

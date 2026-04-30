@@ -63,7 +63,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 BIN_DIR = Path(__file__).resolve().parent
 SKILL_DIR = BIN_DIR.parent
@@ -88,7 +88,7 @@ TELEMETRY_SCHEMA_VERSION = int(_config_get("wrapper.telemetry_schema_version", 1
 
 DEFAULT_TIMEOUT_SECONDS = float(_config_get("wrapper.default_timeout_seconds", 120.0))
 
-MODE_TIMEOUTS: Dict[str, float] = {
+MODE_TIMEOUTS: dict[str, float] = {
     k: float(v) for k, v in _config_get("wrapper.mode_timeouts", {
         "ask":         120.0,
         "verify":      180.0,
@@ -98,7 +98,7 @@ MODE_TIMEOUTS: Dict[str, float] = {
     }).items()
 }
 
-MODE_REASONING: Dict[str, str] = dict(_config_get("wrapper.mode_reasoning", {
+MODE_REASONING: dict[str, str] = dict(_config_get("wrapper.mode_reasoning", {
     "plan-review": "xhigh",
     "delegate":    "xhigh",
     "verify":      "medium",
@@ -127,7 +127,7 @@ from normalize_codex_result import normalize  # noqa: E402
 
 # --------------------------------------------------------------------------- IO
 
-def _emit_json(payload: Dict[str, Any]) -> None:
+def _emit_json(payload: dict[str, Any]) -> None:
     text = json.dumps(payload, ensure_ascii=False)
     try:
         sys.stdout.buffer.write(text.encode("utf-8"))
@@ -135,7 +135,7 @@ def _emit_json(payload: Dict[str, Any]) -> None:
         sys.stdout.write(text)
 
 
-def _read_text_safely(path: Optional[Path]) -> str:
+def _read_text_safely(path: Path | None) -> str:
     if path is None:
         return ""
     try:
@@ -144,7 +144,7 @@ def _read_text_safely(path: Optional[Path]) -> str:
         return ""
 
 
-def _read_json_safely(path: Optional[Path]) -> Dict[str, Any]:
+def _read_json_safely(path: Path | None) -> dict[str, Any]:
     text = _read_text_safely(path)
     if not text:
         return {}
@@ -155,7 +155,7 @@ def _read_json_safely(path: Optional[Path]) -> Dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
-def _codex_child_env() -> Dict[str, str]:
+def _codex_child_env() -> dict[str, str]:
     env = os.environ.copy()
     propagate = _config_get("credentials.propagate", []) or []
     if not propagate:
@@ -167,7 +167,7 @@ def _codex_child_env() -> Dict[str, str]:
     elif not isinstance(raw_sources, list):
         return env
 
-    file_kv: Dict[str, str] = {}
+    file_kv: dict[str, str] = {}
     for raw in raw_sources:
         if not isinstance(raw, str):
             continue
@@ -201,7 +201,7 @@ def _codex_child_env() -> Dict[str, str]:
 
 # ------------------------------------------------------------------- CONTEXT
 
-def _collect_context(cwd: Path, target_path: Optional[Path]) -> str:
+def _collect_context(cwd: Path, target_path: Path | None) -> str:
     cmd = [_resolve_python(), str(COLLECT_SCRIPT), "--cwd", str(cwd), "--format", "text"]
     if target_path is not None:
         cmd += ["--target-path", str(target_path)]
@@ -306,7 +306,7 @@ def _build_prompt(
 
 # -------------------------------------------------------------- CODEX COMMAND
 
-def _codex_base_cmd() -> List[str]:
+def _codex_base_cmd() -> list[str]:
     override = os.environ.get("CODEX_WRAPPER_CODEX_OVERRIDE")
     if override:
         if not Path(override).exists():
@@ -322,8 +322,8 @@ def _build_codex_command(
     mode: str,
     cwd: Path,
     output_file: Path,
-    effort_override: Optional[str] = None,
-) -> List[str]:
+    effort_override: str | None = None,
+) -> list[str]:
     base = _codex_base_cmd()
     if not base:
         return []
@@ -368,7 +368,7 @@ class _Heartbeat:
         self.output_path = output_path
         self.phase = "starting"
         self._stop = threading.Event()
-        self._thread: Optional[threading.Thread] = None
+        self._thread: threading.Thread | None = None
         self._enabled = os.environ.get("CODEX_WRAPPER_DISABLE_HEARTBEAT") != "1"
 
     def set_phase(self, phase: str) -> None:
@@ -409,7 +409,7 @@ class _Heartbeat:
 
 # --------------------------------------------------------------- ERROR RESULTS
 
-def _empty_result(mode: str) -> Dict[str, Any]:
+def _empty_result(mode: str) -> dict[str, Any]:
     return {
         "status": "ok",
         "severity": "low",
@@ -424,7 +424,7 @@ def _empty_result(mode: str) -> Dict[str, Any]:
     }
 
 
-def _generic_error(mode: str, started_at: float, summary: str) -> Dict[str, Any]:
+def _generic_error(mode: str, started_at: float, summary: str) -> dict[str, Any]:
     result = _empty_result(mode)
     result["status"] = "error"
     result["confidence"] = "high"
@@ -455,8 +455,8 @@ def _run_codex_once(
     cwd: Path,
     timeout: float,
     heartbeat: _Heartbeat,
-    effort_override: Optional[str] = None,
-) -> Tuple[str, int, Optional[str]]:
+    effort_override: str | None = None,
+) -> tuple[str, int, str | None]:
     """Run Codex once. Returns (raw_output, exit_code, error_summary).
 
     ``error_summary`` is None on a clean run (regardless of Codex content);
@@ -529,7 +529,7 @@ def _run_codex_once(
             pass
 
 
-def _wants_retry(mode: str, normalized: Dict[str, Any]) -> bool:
+def _wants_retry(mode: str, normalized: dict[str, Any]) -> bool:
     """True when we should ask Codex to retry with a stricter instruction.
 
     Only review modes — delegate is allowed to return prose. We retry when
@@ -543,7 +543,7 @@ def _wants_retry(mode: str, normalized: Dict[str, Any]) -> bool:
     return normalized.get("error_class") == "not_structured_json"
 
 
-def _best_effort_partial(mode: str, raw: str) -> Optional[Dict[str, Any]]:
+def _best_effort_partial(mode: str, raw: str) -> dict[str, Any] | None:
     """Try to salvage a half-written JSON object. Returns None if nothing
     usable can be extracted."""
     if not raw or not raw.strip():
@@ -593,7 +593,7 @@ def _best_effort_partial(mode: str, raw: str) -> Optional[Dict[str, Any]]:
     return salvaged
 
 
-def _enrich_delegate_fields(normalized: Dict[str, Any], raw_data: Dict[str, Any]) -> None:
+def _enrich_delegate_fields(normalized: dict[str, Any], raw_data: dict[str, Any]) -> None:
     """Pass through the optional delegate-specific fields when present."""
     for key in ("files_created", "files_edited", "files_deleted",
                 "commands_run", "tests_run"):
@@ -602,11 +602,11 @@ def _enrich_delegate_fields(normalized: Dict[str, Any], raw_data: Dict[str, Any]
             normalized[key] = [str(item) for item in value if isinstance(item, (str, int, float))]
 
 
-def _enrich_needs_input(normalized: Dict[str, Any], raw_data: Dict[str, Any]) -> None:
+def _enrich_needs_input(normalized: dict[str, Any], raw_data: dict[str, Any]) -> None:
     questions = raw_data.get("questions")
     if not isinstance(questions, list):
         return
-    cleaned: List[Dict[str, str]] = []
+    cleaned: list[dict[str, str]] = []
     for q in questions:
         if not isinstance(q, dict):
             continue
@@ -623,11 +623,11 @@ def _enrich_needs_input(normalized: Dict[str, Any], raw_data: Dict[str, Any]) ->
         normalized["questions"] = cleaned
 
 
-def _try_extract_raw_dict(raw: str) -> Dict[str, Any]:
+def _try_extract_raw_dict(raw: str) -> dict[str, Any]:
     """Look for a parseable JSON object inside raw output. Returns {} on miss."""
     if not raw or not raw.strip():
         return {}
-    candidates: List[str] = []
+    candidates: list[str] = []
     stripped = raw.strip()
     if stripped.startswith("{"):
         candidates.append(stripped)
@@ -656,8 +656,8 @@ def _invoke_codex(
     cwd: Path,
     timeout: float,
     heartbeat: _Heartbeat,
-    effort_override: Optional[str] = None,
-) -> Tuple[Dict[str, Any], int, int]:
+    effort_override: str | None = None,
+) -> tuple[dict[str, Any], int, int]:
     """Run Codex with one optional retry on JSON parse failure.
 
     Returns ``(normalized_result, retry_count, last_exit_code)``.
@@ -720,7 +720,7 @@ def _resolve_timeout(mode: str) -> float:
 
 # --------------------------------------------------------------- TELEMETRY
 
-def _write_telemetry(entry: Dict[str, Any]) -> None:
+def _write_telemetry(entry: dict[str, Any]) -> None:
     if os.environ.get("CODEX_WRAPPER_TELEMETRY_DISABLED") == "1":
         return
     try:
@@ -740,7 +740,7 @@ def _write_telemetry(entry: Dict[str, Any]) -> None:
 
 # --------------------------------------------------------------- CLI
 
-def _parse_cli(argv: Optional[List[str]]) -> argparse.Namespace:
+def _parse_cli(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=t("wrapper.cli.description"))
     parser.add_argument("mode", choices=list(ALL_MODES), help=t("wrapper.cli.help.mode"))
     parser.add_argument("--cwd", required=True)
@@ -762,7 +762,7 @@ def _parse_cli(argv: Optional[List[str]]) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def _resolve_effort_override(raw_value: Optional[str]) -> Optional[str]:
+def _resolve_effort_override(raw_value: str | None) -> str | None:
     """Validate the user-provided effort. Returns None if not set or invalid.
 
     Invalid values emit a warning to stderr and fall back to the per-mode
@@ -783,7 +783,7 @@ def _resolve_effort_override(raw_value: Optional[str]) -> Optional[str]:
     return None
 
 
-def _maybe_build_review_packet(args: argparse.Namespace) -> Optional[str]:
+def _maybe_build_review_packet(args: argparse.Namespace) -> str | None:
     """When plan-review is invoked with only --last-message-file, materialize a
     review packet on the fly so Codex always gets the structured bundle."""
     if args.mode != "plan-review":
@@ -844,7 +844,7 @@ def _assemble_user_payload(args: argparse.Namespace) -> str:
     return _read_text_safely(Path(args.task_file) if args.task_file else None)
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     args = _parse_cli(argv)
     # All wrapper modes (ask, verify, plan-review, delegate, insight) are
     # active — none are passive. Setup wizard is auto-triggered (only in

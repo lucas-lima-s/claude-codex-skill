@@ -20,7 +20,6 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import List, Optional, Tuple
 
 
 CLAUDE_MD = "CLAUDE.md"
@@ -39,7 +38,7 @@ def _target_directory(target: Path) -> Path:
     return target
 
 
-def _find_repo_root(start: Path) -> Optional[Path]:
+def _find_repo_root(start: Path) -> Path | None:
     """Walk from `start` up to the filesystem root and return the outermost
     directory that contains a `.git/` **directory**. This yields the top-level
     superproject when the caller sits inside a git submodule (submodules mark
@@ -47,7 +46,7 @@ def _find_repo_root(start: Path) -> Optional[Path]:
     """
     current = start if start.is_dir() else start.parent
     current = _resolve(current)
-    outermost: Optional[Path] = None
+    outermost: Path | None = None
     while True:
         git_entry = current / ".git"
         if git_entry.is_dir():
@@ -66,7 +65,7 @@ def _is_ancestor_or_equal(ancestor: Path, descendant: Path) -> bool:
         return False
 
 
-def _ancestor_dirs_between(repo_root: Path, target_dir: Path) -> List[Path]:
+def _ancestor_dirs_between(repo_root: Path, target_dir: Path) -> list[Path]:
     """Return directories strictly between repo_root and target_dir, in order
     from shallowest (closest to repo_root) to deepest (closest to target_dir).
     """
@@ -78,7 +77,7 @@ def _ancestor_dirs_between(repo_root: Path, target_dir: Path) -> List[Path]:
     parts = list(rel.parts)
     if len(parts) <= 1:
         return []
-    ancestors: List[Path] = []
+    ancestors: list[Path] = []
     current = repo_root
     for part in parts[:-1]:
         current = current / part
@@ -87,11 +86,11 @@ def _ancestor_dirs_between(repo_root: Path, target_dir: Path) -> List[Path]:
 
 
 def _build_candidates(
-    repo_root: Optional[Path],
+    repo_root: Path | None,
     target_dir: Path,
     global_path: Path,
-) -> List[Tuple[Path, str]]:
-    candidates: List[Tuple[Path, str]] = [(global_path, "global")]
+) -> list[tuple[Path, str]]:
+    candidates: list[tuple[Path, str]] = [(global_path, "global")]
     if repo_root is not None and _is_ancestor_or_equal(repo_root, target_dir):
         candidates.append((repo_root / CLAUDE_MD, "repo"))
         for anc in _ancestor_dirs_between(repo_root, target_dir):
@@ -103,7 +102,7 @@ def _build_candidates(
     return candidates
 
 
-def _read_safely(path: Path) -> Optional[str]:
+def _read_safely(path: Path) -> str | None:
     try:
         return path.read_text(encoding="utf-8")
     except FileNotFoundError:
@@ -119,9 +118,9 @@ def _read_safely(path: Path) -> Optional[str]:
 
 def collect(
     cwd: Path,
-    target_path: Optional[Path],
-    repo_root_arg: Optional[Path],
-    global_claude_md: Optional[Path],
+    target_path: Path | None,
+    repo_root_arg: Path | None,
+    global_claude_md: Path | None,
 ) -> dict:
     cwd_abs = _resolve(cwd)
     target_abs = _resolve(target_path) if target_path is not None else cwd_abs
@@ -129,7 +128,7 @@ def collect(
     target_dir = _resolve(target_dir)
 
     if repo_root_arg is not None:
-        repo_root: Optional[Path] = _resolve(repo_root_arg)
+        repo_root: Path | None = _resolve(repo_root_arg)
     else:
         detected = _find_repo_root(target_dir) if target_dir.exists() else None
         if detected is None:
@@ -142,7 +141,7 @@ def collect(
 
     candidates = _build_candidates(repo_root, target_dir, global_path)
 
-    entries: List[dict] = []
+    entries: list[dict] = []
     seen: set = set()
     total = 0
     for path, scope in candidates:
@@ -182,7 +181,7 @@ def collect(
 def format_text(result: dict) -> str:
     n = len(result["entries"])
     total = result["total_bytes"]
-    lines: List[str] = [f"=== CLAUDE.md contexto ({n} arquivos, {total} bytes) ==="]
+    lines: list[str] = [f"=== CLAUDE.md contexto ({n} arquivos, {total} bytes) ==="]
     for entry in result["entries"]:
         lines.append("")
         lines.append(f"--- {entry['path']} (scope={entry['scope']}) ---")
@@ -192,7 +191,7 @@ def format_text(result: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0] if __doc__ else None)
     parser.add_argument("--cwd", required=True)
     parser.add_argument("--target-path", default=None)
