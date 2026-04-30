@@ -1,153 +1,158 @@
-# Setup — skill `codex`
+# Setup — `codex` skill
 
-Ponte Claude Code → Codex CLI. Único ponto de entrada para automação.
+Claude Code → Codex CLI bridge. The single entry point for automation.
 
-Suportado em Windows, Linux e macOS via Python 3.10+.
+Supported on Windows, Linux, and macOS via Python 3.10+.
 
-## Requisitos
+## Requirements
 
-- Codex CLI instalado e no `PATH` (`codex --version` deve responder).
-- Python disponível via `$SKILLS_PYTHON` (preferido), `$CLAUDE_AUTOMATION_PYTHON`,
-  ou simplesmente `python`/`python3` no `PATH`.
-- (Opcional) Credenciais para o subprocesso do Codex em
-  `~/.claude/credentials.env` (global) ou `.env` na raiz da skill (override
-  per-skill), formato `KEY=value`. Apenas as chaves listadas em
-  `settings.credentials.propagate` (em `config.local.json`) são injetadas
-  no env do Codex a partir desses arquivos; valores nunca aparecem em
-  logs. **Importante**: variáveis já presentes no ambiente do processo
-  pai (shell do usuário, Claude Code) são herdadas como qualquer
-  subprocesso POSIX, independentemente de `propagate`. Para isolamento
-  total, invoque com `env -i` ou seu equivalente.
+- Codex CLI installed and on `PATH` (`codex --version` must respond).
+- Python available via `$SKILLS_PYTHON` (preferred),
+  `$CLAUDE_AUTOMATION_PYTHON`, or simply `python` / `python3` on `PATH`.
+- (Optional) Credentials for the Codex subprocess in
+  `~/.claude/credentials.env` (global) or `.env` at the skill root
+  (per-skill override), `KEY=value` format. Only the keys listed in
+  `settings.credentials.propagate` (in `config.local.json`) are
+  injected into the Codex subprocess env from those files; values never
+  appear in logs. **Important**: variables already present in the
+  parent process environment (user's shell, Claude Code) are inherited
+  as in any POSIX subprocess, regardless of `propagate`. For full
+  isolation, invoke with `env -i` or its equivalent.
 
-## Primeira execução
+## First run
 
-Rode o wizard interativo:
+Run the interactive wizard:
 
     python scripts/setup.py
 
-Ele pergunta o idioma da interface (`en-US` ou `pt-BR`), valida o
-ambiente (Codex CLI, Python) e lista as credenciais que serão propagadas
-para o subprocesso do Codex (sem expor valores). A preferência fica em
-`config.local.json` (gitignored). Toda saída do wizard vai para
-**stderr** — stdout permanece reservado para o JSON canônico do
-wrapper, então o auto-trigger no primeiro uso interativo não quebra
-parsers.
+It asks for the interface locale (`en-US` or `pt-BR`), validates the
+environment (Codex CLI, Python), and lists the credentials that will
+be propagated to the Codex subprocess (without exposing values). The
+preference is persisted in `config.local.json` (gitignored). All wizard
+output goes to **stderr** — stdout stays reserved for the wrapper's
+canonical JSON, so the auto-trigger on first interactive use does not
+break parsers.
 
-Para trocar o idioma depois, re-rode o mesmo comando, ou use o helper
-não-interativo:
+To change the locale later, re-run the same command, or use the
+non-interactive helper:
 
     python scripts/set_locale.py --locale en-US
 
-**BREAKING CHANGE em relação à versão anterior**: até esta versão,
-`COMPOSIO_API_KEY` era propagada automaticamente. Agora a propagação é
-declarativa e o default é vazio (nenhuma credencial é enviada ao
-subprocesso a partir dos arquivos `source`). Se você dependia desse
-comportamento, adicione no seu `config.local.json`:
+**BREAKING CHANGE compared to the previous version**: until this
+release, `COMPOSIO_API_KEY` was propagated automatically. Propagation
+is now declarative and the default is empty (no credential is sent to
+the subprocess from the `source` files). If you depended on that
+behaviour, add the following to your `config.local.json`:
 
     {"settings": {"credentials": {"propagate": ["COMPOSIO_API_KEY"]}}}
 
-Para usar `.env` per-skill como fonte primária:
+To use a per-skill `.env` as the primary source:
 
     {"settings": {"credentials": {
       "source": ["./.env", "~/.claude/credentials.env"],
       "propagate": ["GITHUB_TOKEN"]
     }}}
 
-## Variáveis de ambiente reconhecidas
+## Recognised environment variables
 
-| Variável | Função |
+| Variable | Purpose |
 |---|---|
-| `SKILLS_PYTHON` | Interpretador Python preferido. |
-| `CLAUDE_AUTOMATION_PYTHON` | Fallback de Python. |
-| `CODEX_WRAPPER_TIMEOUT_SECONDS` | Override global do timeout (segundos). Sobrescreve o default por modo. |
-| `CODEX_WRAPPER_CODEX_OVERRIDE` | Aponta para um Python alternativo a ser invocado no lugar do `codex` real (usado apenas em testes — ver `tests/fake_codex.py`). |
-| `CODEX_WRAPPER_DISABLE_HEARTBEAT` | Quando `1`, desliga o heartbeat de progresso no `stderr`. |
-| `CODEX_WRAPPER_USE_JSON_STREAM` | Quando `1`, tenta `codex exec --json` (stream de eventos) com fallback automático para o modo padrão. |
-| `CODEX_WRAPPER_TELEMETRY_DISABLED` | Quando `1`, não grava em `cache/runs.jsonl`. |
-| `CODEX_BG_MAX_CONCURRENT` | Limite de runs simultâneas em background (default 5). Override via `--max-concurrent N` no `codex_bg.py start`. |
-| `CODEX_DIALOGUE_MAX_TURNS` | Default de turnos no `codex_dialogue.py start` (default 3, range 1-20). Override via `--max-turns N`. |
-| `CODEX_LOCALE` | Idioma das mensagens user-facing (`pt-BR` ou `en-US`). Default: detectado pelo sistema (`locale.getdefaultlocale()`), com fallback para `pt-BR`. |
+| `SKILLS_PYTHON` | Preferred Python interpreter. |
+| `CLAUDE_AUTOMATION_PYTHON` | Python fallback. |
+| `CODEX_WRAPPER_TIMEOUT_SECONDS` | Global timeout override (seconds). Overrides the per-mode default. |
+| `CODEX_WRAPPER_CODEX_OVERRIDE` | Points to an alternative Python script invoked instead of the real `codex` (testing only — see `tests/fake_codex.py`). |
+| `CODEX_WRAPPER_DISABLE_HEARTBEAT` | When `1`, disables the progress heartbeat on `stderr`. |
+| `CODEX_WRAPPER_USE_JSON_STREAM` | When `1`, attempts `codex exec --json` (event stream) with automatic fallback to the default mode. |
+| `CODEX_WRAPPER_TELEMETRY_DISABLED` | When `1`, skips writing to `cache/runs.jsonl`. |
+| `CODEX_BG_MAX_CONCURRENT` | Concurrent background runs limit (default 5). Override with `--max-concurrent N` on `codex_bg.py start`. |
+| `CODEX_DIALOGUE_MAX_TURNS` | Default turn count for `codex_dialogue.py start` (default 3, range 1-20). Override with `--max-turns N`. |
+| `CODEX_LOCALE` | User-facing message language (`pt-BR` or `en-US`). Default: detected from the system (`locale.getdefaultlocale()`), falling back to `pt-BR`. |
 
-## Estrutura
+## Layout
 
 ```
 ~/.claude/skills/codex/
-  SKILL.md                       — entrada da skill (modos, exemplos, regras)
-  SETUP.md                       — este arquivo
+  SKILL.md                       — skill entry point (modes, examples, rules)
+  SETUP.md                       — this file
   scripts/
-    invoke_codex_with_claude.py  — wrapper canônico (Python)
-    invoke_codex_with_claude.ps1 — shim de compatibilidade (PowerShell)
-    collect_claude_context.py    — coleta CLAUDE.md global/repo/target
-    dump_transcript_for_codex.py — dump filtrado do transcript da sessão
-    build_review_packet.py       — monta packet para `plan-review`
-    normalize_codex_result.py    — normaliza saída crua do Codex
-    codex_batch.py               — runner síncrono de batch-ask/batch-delegate
-    codex_bg.py                  — runner assíncrono (start/status/output/cancel/list)
-    codex_dialogue.py            — diálogo iterativo multi-jogada (start/next-turn/finish/abort/status)
-    analyze_plan_complexity.py   — heurística para auto-sugerir plan-review-iter
-    codex_config.py              — config centralizada + i18n (get/t/detect_locale)
-    codex_output_schema.json     — JSON Schema usado em `--output-schema`
-  config.default.json            — settings + locales versionados
-  config.local.json              — override do usuário (gitignored, opcional)
+    invoke_codex_with_claude.py  — canonical wrapper (Python)
+    invoke_codex_with_claude.ps1 — compatibility shim (PowerShell)
+    collect_claude_context.py    — collects global/repo/target CLAUDE.md
+    dump_transcript_for_codex.py — filtered session transcript dump
+    build_review_packet.py       — builds packet for `plan-review`
+    normalize_codex_result.py    — normalises raw Codex output
+    codex_batch.py               — synchronous batch-ask / batch-delegate runner
+    codex_bg.py                  — async runner (start/status/output/cancel/list)
+    codex_dialogue.py            — iterative multi-turn dialogue (start/next-turn/finish/abort/status)
+    analyze_plan_complexity.py   — heuristic to auto-suggest plan-review-iter
+    codex_config.py              — centralised config + i18n (get/t/detect_locale)
+    setup.py                     — interactive setup wizard
+    set_locale.py                — non-interactive locale setter
+    codex_output_schema.json     — JSON Schema used by `--output-schema`
+  config.default.json            — versioned settings + locales
+  config.local.json              — user override (gitignored, optional)
   cache/
-    runs.jsonl                   — telemetria (rotaciona aos 5 MB para .1)
+    runs.jsonl                   — telemetry (rotates to .1 at 5 MB)
   tests/
-    fake_codex.py                — Codex falso parametrizável para testes
+    fake_codex.py                — parametrisable fake Codex for tests
 ```
 
-## Configuração e i18n
+## Configuration and i18n
 
-A skill carrega settings + locales de `config.default.json` (versionado) e
-aplica deep-merge de `config.local.json` (gitignored, opcional) por cima.
-Helpers em `scripts/codex_config.py`:
+The skill loads settings + locales from `config.default.json` (versioned)
+and deep-merges `config.local.json` (gitignored, optional) on top.
+Helpers in `scripts/codex_config.py`:
 
-- `get("dialogue.default_max_turns", 3)` — lookup com dotted-path em
+- `get("dialogue.default_max_turns", 3)` — dotted-path lookup into
   `settings.*`.
-- `t("wrapper.error.timeout", timeout=30)` — tradução com fallback
-  pt-BR → chave literal e suporte a `{kwargs}`.
-- `detect_locale()` — `CODEX_LOCALE` env > `locale.getdefaultlocale()` >
-  `pt-BR`. Códigos com underscore (`pt_BR`) viram hífen (`pt-BR`).
+- `t("wrapper.error.timeout", timeout=30)` — translation with fallback
+  pt-BR → literal key, supporting `{kwargs}`.
+- `detect_locale()` — `CODEX_LOCALE` env > `settings.locale` in
+  `config.local.json` > `locale.getdefaultlocale()` > `pt-BR`. Codes
+  with underscore (`pt_BR`) are normalised to hyphen (`pt-BR`).
 
-**Para customizar**: copie campos de `config.default.json` para um novo
-`config.local.json`. Apenas as chaves presentes no override são
-sobrescritas (deep-merge).
+**To customise**: copy fields from `config.default.json` into a new
+`config.local.json`. Only the keys present in the override are
+overridden (deep-merge).
 
-Idiomas suportados out-of-the-box: `pt-BR` (default) e `en-US`. Para
-adicionar um novo locale, basta adicionar uma seção `locales.<código>`
-no `config.local.json` (ou propor PR pra entrar no default).
+Locales supported out of the box: `pt-BR` (default) and `en-US`. To add
+a new locale, add a `locales.<code>` section in `config.local.json` (or
+open a PR to land it in the default).
 
-## Modos
+## Modes
 
-Detalhes em `SKILL.md`. Resumo:
+See `SKILL.md` for details. Summary:
 
-- `plan-review` — Codex revisa um plano (read-only).
-- `verify` — Codex revisa um diff (read-only).
-- `ask` — Codex responde uma pergunta direta.
-- `insight` — Retrospectiva holística da sessão.
-- `delegate` — Codex executa uma tarefa (`--sandbox danger-full-access`,
-  exige confirmação explícita).
-- `batch-ask` — Roda múltiplas perguntas em paralelo (read-only).
-- `batch-delegate` — Múltiplas execuções paralelas com write-set declarado.
+- `plan-review` — Codex reviews a plan (read-only).
+- `verify` — Codex reviews a diff (read-only).
+- `ask` — Codex answers a direct question.
+- `insight` — Holistic session retrospective.
+- `delegate` — Codex executes a task (`--sandbox danger-full-access`,
+  explicit confirmation required).
+- `batch-ask` — Runs multiple questions in parallel (read-only).
+- `batch-delegate` — Multiple parallel executions with declared
+  write-set.
 
-## Roadmap (não implementado)
+## Roadmap (not yet implemented)
 
-Veja `ROADMAP.md` na raiz da skill. Itens em aberto:
+See `ROADMAP.md` at the skill root. Open items:
 
-- Cache de revisões por fingerprint, modo repro, parser de stream `--json`.
+- Review caching by fingerprint, repro mode, `--json` stream parser.
 
-Já implementado: background agents (`scripts/codex_bg.py`),
-multi-jogada (`scripts/codex_dialogue.py` + `analyze_plan_complexity.py`),
-`--reasoning-effort` configurável.
+Already implemented: background agents (`scripts/codex_bg.py`),
+multi-turn dialogue (`scripts/codex_dialogue.py` +
+`analyze_plan_complexity.py`), configurable `--reasoning-effort`.
 
-## Notas para outros usuários
+## Notes for other users
 
-A skill é portátil: caminhos vêm de `$SKILLS_PYTHON`, `$USERPROFILE` e
-`$env:TEMP`. Não há paths hardcoded para a máquina do autor. Se você não
-tiver `$SKILLS_PYTHON`, exporte a variável (ou use `python` no `PATH`).
+The skill is portable: paths come from `$SKILLS_PYTHON`, `$USERPROFILE`,
+and `$env:TEMP`. Nothing is hardcoded to the author's machine. If you
+do not have `$SKILLS_PYTHON`, export the variable (or use `python` on
+`PATH`).
 
-## Plugin oficial `codex@openai-codex`
+## Official `codex@openai-codex` plugin
 
-Foi desabilitado em `~/.claude/settings.json` para evitar dois pontos de
-entrada concorrentes. A invocação manual via `/codex:*` continua possível
-quando o usuário habilitar de novo, mas não deve ser usada como caminho de
-automação por nenhuma skill ou hook.
+Disabled in `~/.claude/settings.json` to avoid two competing entry
+points. Manual invocation via `/codex:*` is still possible when the
+user re-enables the plugin, but it should not be used as an automation
+path by any skill or hook.

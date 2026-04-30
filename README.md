@@ -1,110 +1,114 @@
 # claude-codex-skill
 
-Skill do [Claude Code](https://claude.com/claude-code) que serve como ponte
-entre o Claude e o [Codex CLI](https://github.com/openai/codex), oferecendo
-sete modos de operação para revisão, verificação, perguntas e delegação de
-tarefas — com sandbox controlado, telemetria e batching.
+A skill for [Claude Code](https://claude.com/claude-code) that bridges
+Claude and the [Codex CLI](https://github.com/openai/codex), offering
+seven operation modes for plan review, code verification, questions, and
+task delegation — with controlled sandbox, telemetry, and batching.
 
-## O que é
+## What it is
 
-Um único ponto de entrada (`SKILL.md` + wrapper Python) para o Claude invocar
-o Codex de forma estruturada. Os prompts, schemas, timeouts e nível de
-reasoning são definidos por modo — o Claude escolhe o modo certo a partir do
-pedido do usuário em pt-BR e o wrapper cuida do resto (montagem do packet,
-chamada ao `codex exec`, normalização do JSON de saída e telemetria).
+A single entry point (`SKILL.md` + Python wrapper) for Claude to invoke
+Codex in a structured way. Prompts, schemas, timeouts, and reasoning
+levels are configured per mode — Claude picks the right mode from the
+user's natural-language request and the wrapper handles everything else
+(packet assembly, `codex exec` invocation, output JSON normalization, and
+telemetry).
 
-## Modos
+## Modes
 
-| Modo             | Reasoning | Sandbox                | Timeout | Uso típico                                              |
-|------------------|-----------|------------------------|---------|---------------------------------------------------------|
-| `plan-review`    | xhigh     | read-only              | 300s    | Revisar um plano antes da implementação                 |
-| `verify`         | medium    | read-only              | 180s    | Revisar uma implementação por `git diff`                |
-| `ask`            | medium    | read-only              | 120s    | Pergunta direta / segunda opinião                       |
-| `insight`        | xhigh     | read-only              | 420s    | Retrospectiva holística da sessão                       |
-| `delegate`       | xhigh     | **danger-full-access** | 300s    | Codex executa uma tarefa (com confirmação obrigatória)  |
-| `batch-ask`      | medium    | read-only              | —       | Até 4 perguntas em paralelo                             |
-| `batch-delegate` | xhigh     | danger-full-access     | —       | Múltiplas execuções paralelas com write-set declarado   |
+| Mode             | Reasoning | Sandbox                | Timeout | Typical use                                                   |
+|------------------|-----------|------------------------|---------|---------------------------------------------------------------|
+| `plan-review`    | xhigh     | read-only              | 300s    | Review a plan before implementation                           |
+| `verify`         | medium    | read-only              | 180s    | Review an implementation through `git diff`                   |
+| `ask`            | medium    | read-only              | 120s    | Direct question / second opinion                              |
+| `insight`        | xhigh     | read-only              | 420s    | Holistic session retrospective                                |
+| `delegate`       | xhigh     | **danger-full-access** | 300s    | Codex executes a task (explicit confirmation required)        |
+| `batch-ask`      | medium    | read-only              | —       | Up to 4 questions in parallel                                 |
+| `batch-delegate` | xhigh     | danger-full-access     | —       | Multiple parallel executions with declared write-set          |
 
-## Instalação
+## Installation
 
 ```bash
 git clone https://github.com/lucas-lima-s/claude-codex-skill.git ~/.claude/skills/codex
 ```
 
-A skill é portátil: caminhos vêm de variáveis de ambiente
-(`$SKILLS_PYTHON`, `$USERPROFILE`, `$env:TEMP`). Não há paths hardcoded.
+The skill is portable: paths come from environment variables
+(`$SKILLS_PYTHON`, `$USERPROFILE`, `$env:TEMP`). No paths are hardcoded.
 
-### Pré-requisitos
+### Prerequisites
 
-- [Codex CLI](https://github.com/openai/codex) instalado e no `PATH`
-  (`codex --version` deve responder).
-- Python 3.10+ disponível via `$SKILLS_PYTHON`, `$CLAUDE_AUTOMATION_PYTHON`,
-  ou simplesmente `python` / `python3` no `PATH`.
-- Claude Code (a skill foi desenhada para ser invocada pelo Claude, mas os
-  scripts em `scripts/` podem ser usados standalone).
+- [Codex CLI](https://github.com/openai/codex) installed and on `PATH`
+  (`codex --version` must respond).
+- Python 3.10+ available via `$SKILLS_PYTHON`, `$CLAUDE_AUTOMATION_PYTHON`,
+  or just `python` / `python3` on `PATH`.
+- Claude Code (the skill is designed to be invoked by Claude, but the
+  scripts under `scripts/` can be used standalone).
 
-Detalhes em [`SETUP.md`](SETUP.md).
+See [`SETUP.md`](SETUP.md) for details.
 
-## Uso
+## Usage
 
-Depois de instalada, o Claude reconhece automaticamente frases naturais como:
+Once installed, Claude automatically recognises natural-language phrases
+such as:
 
-- "revise esse plano com o codex" → `plan-review`
-- "pergunta pro codex o que ele acha" → `ask`
-- "verifica minha implementação com o codex" → `verify`
-- "delega ao codex" → `delegate` (exige confirmação explícita)
-- "faz um insight da sessão" → `insight`
+- "review this plan with codex" → `plan-review`
+- "ask codex what it thinks" → `ask`
+- "verify my implementation with codex" → `verify`
+- "delegate to codex" → `delegate` (requires explicit confirmation)
+- "do a session insight" → `insight`
 
-## Estrutura
+(Trigger phrases are matched in pt-BR by default — see `SKILL.md`.)
+
+## Structure
 
 ```
 .
-├── SKILL.md                       # entrada da skill (modos, exemplos, regras)
-├── SETUP.md                       # requisitos, env vars, instalação
-├── ROADMAP.md                     # itens em aberto (não implementados ainda)
-├── README.md                      # este arquivo
+├── SKILL.md                       # skill entry point (modes, examples, rules)
+├── SETUP.md                       # requirements, env vars, installation
+├── ROADMAP.md                     # open items (not implemented yet)
+├── README.md                      # this file
 ├── LICENSE                        # MIT
 ├── scripts/
-│   ├── invoke_codex_with_claude.py  # wrapper canônico
-│   ├── invoke_codex_with_claude.ps1 # shim PowerShell
-│   ├── codex_batch.py               # batching paralelo (modos batch-*)
-│   ├── build_review_packet.py       # monta packet para plan-review
-│   ├── collect_claude_context.py    # coleta CLAUDE.md global/repo/target
-│   ├── dump_transcript_for_codex.py # dump filtrado do transcript
-│   ├── normalize_codex_result.py    # normaliza saída crua do Codex
+│   ├── invoke_codex_with_claude.py  # canonical wrapper
+│   ├── invoke_codex_with_claude.ps1 # PowerShell shim
+│   ├── codex_batch.py               # parallel batching (batch-* modes)
+│   ├── build_review_packet.py       # builds packet for plan-review
+│   ├── collect_claude_context.py    # collects global/repo/target CLAUDE.md
+│   ├── dump_transcript_for_codex.py # filtered transcript dump
+│   ├── normalize_codex_result.py    # normalises raw Codex output
 │   └── codex_output_schema.json     # JSON Schema (--output-schema)
 └── tests/
-    ├── test_codex_skill.py          # testes mockados (rápidos)
-    ├── test_codex_live.py           # testes contra Codex real (gastam tokens)
-    └── fake_codex.py                # Codex falso parametrizável
+    ├── test_codex_skill.py          # mocked tests (fast)
+    ├── test_codex_live.py           # tests against the real Codex (cost tokens)
+    └── fake_codex.py                # parametrisable fake Codex
 ```
 
-## Segurança
+## Security
 
-- **`delegate` roda com `--sandbox danger-full-access`** — o Codex pode
-  criar, editar ou deletar arquivos em qualquer lugar do disco. A skill
-  exige confirmação explícita do usuário antes de cada chamada, listando
-  tarefa literal, `cwd`, branch, paths fora do workspace e palavras de
-  risco detectadas (`delete`, `rm -rf`, `force`, `reset --hard`, etc.).
-- Todos os outros modos usam `--sandbox read-only`.
-- Credenciais propagadas para o subprocesso são declarativas em
-  `settings.credentials.propagate` (config-driven, default vazio). As
-  fontes ficam em `settings.credentials.source` (lista ordenada,
-  default `["./.env", "~/.claude/credentials.env"]`). Apenas as chaves
-  listadas são injetadas no env do subprocesso a partir desses
-  arquivos — valores nunca aparecem em logs. Variáveis já presentes no
-  env do processo pai são herdadas como em qualquer subprocesso POSIX.
-- Telemetria local (`cache/runs.jsonl`) está no `.gitignore` por padrão.
+- **`delegate` runs with `--sandbox danger-full-access`** — Codex can
+  create, edit, or delete files anywhere on disk. The skill requires
+  explicit user confirmation before every call, listing the literal
+  task, `cwd`, branch, paths outside the workspace, and risk keywords
+  detected (`delete`, `rm -rf`, `force`, `reset --hard`, etc.).
+- All other modes use `--sandbox read-only`.
+- Credentials propagated to the subprocess are declarative in
+  `settings.credentials.propagate` (config-driven, empty by default).
+  Sources live in `settings.credentials.source` (ordered list, default
+  `["./.env", "~/.claude/credentials.env"]`). Only the listed keys are
+  injected into the subprocess env from those files — values never
+  appear in logs. Variables already present in the parent process env
+  are inherited as in any POSIX subprocess.
+- Local telemetry (`cache/runs.jsonl`) is in `.gitignore` by default.
 
-## Status e roadmap
+## Status and roadmap
 
-A skill está em uso real. Itens em aberto (não implementados ainda) estão
-listados em [`ROADMAP.md`](ROADMAP.md):
+The skill is in real use. Open items (not yet implemented) are listed in
+[`ROADMAP.md`](ROADMAP.md):
 
-- Background agents nomeados (execução não-bloqueante).
-- Conversa multi-jogada Claude ↔ Codex (até 5 turnos).
-- Cache de revisões por fingerprint, modo repro, parser de stream `--json`.
+- Named background agents (non-blocking execution).
+- Multi-turn Claude ↔ Codex dialogue (up to 5 turns).
+- Review caching by fingerprint, repro mode, `--json` stream parser.
 
-## Licença
+## License
 
 [MIT](LICENSE).

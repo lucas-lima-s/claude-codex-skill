@@ -152,7 +152,7 @@ def _tempdir():
 # ----------------------------------------------------------------------- tests
 
 def test_plan_review_modes(r: Runner) -> None:
-    r.section("plan-review × cenários")
+    r.section("plan-review × scenarios")
     with _tempdir() as tmp:
         plan = tmp / "plan.md"
         plan.write_text(
@@ -212,7 +212,7 @@ def test_plan_review_modes(r: Runner) -> None:
 
 
 def test_verify_mode(r: Runner) -> None:
-    r.section("verify × cenários")
+    r.section("verify × scenarios")
     with _tempdir() as tmp:
         payload = tmp / "payload.json"
         payload.write_text(json.dumps({
@@ -233,7 +233,7 @@ def test_verify_mode(r: Runner) -> None:
 
 
 def test_ask_mode(r: Runner) -> None:
-    r.section("ask × cenários")
+    r.section("ask × scenarios")
     with _tempdir() as tmp:
         question = tmp / "q.txt"
         question.write_text("Qual a complexidade de quicksort?", encoding="utf-8")
@@ -246,7 +246,7 @@ def test_ask_mode(r: Runner) -> None:
 
 
 def test_insight_mode(r: Runner) -> None:
-    r.section("insight × cenários")
+    r.section("insight × scenarios")
     with _tempdir() as tmp:
         focus = tmp / "focus.txt"
         focus.write_text("Foque em arquitetura.", encoding="utf-8")
@@ -258,10 +258,10 @@ def test_insight_mode(r: Runner) -> None:
 
 
 def test_delegate_mode(r: Runner) -> None:
-    r.section("delegate × cenários")
+    r.section("delegate × scenarios")
     with _tempdir() as tmp:
         task = tmp / "task.txt"
-        task.write_text("Criar um arquivo fake/new.txt vazio.", encoding="utf-8")
+        task.write_text("Create an empty fake/new.txt file.", encoding="utf-8")
         common = ["--cwd", str(SKILL_DIR), "--task-file", str(task)]
 
         # delegate_ok behavior returns delegate-shaped JSON
@@ -281,7 +281,7 @@ def test_delegate_mode(r: Runner) -> None:
 
 
 def test_review_packet_window(r: Runner) -> None:
-    r.section("build_review_packet × seleção e janelas")
+    r.section("build_review_packet × selection and windows")
     with _tempdir() as tmp:
         # Build a 500-line synthetic file so the windowing rule kicks in.
         big_dir = tmp / "src"
@@ -473,7 +473,7 @@ def test_batch_ask_speedup(r: Runner) -> None:
 
 
 def test_batch_ask_partial(r: Runner) -> None:
-    r.section("batch-ask × falha parcial não cancela demais")
+    r.section("batch-ask × partial failure does not cancel the rest")
     with _tempdir() as tmp:
         # Run 3 OK tasks; the global behavior is fixed via env, so we can't
         # mix per-item easily with the current fake. Instead we exercise the
@@ -561,7 +561,7 @@ def test_batch_delegate_violation(r: Runner) -> None:
 
 
 def test_telemetry_schema(r: Runner) -> None:
-    r.section("telemetria × schema e gravação")
+    r.section("telemetry × schema and write")
     cache_dir = SKILL_DIR / "cache"
     cache_dir.mkdir(exist_ok=True)
     runs = cache_dir / "runs.jsonl"
@@ -593,7 +593,7 @@ def test_telemetry_schema(r: Runner) -> None:
 
 
 def test_telemetry_rotation(r: Runner) -> None:
-    r.section("telemetria × rotação aos 5 MB")
+    r.section("telemetry × rotation at 5 MB")
     cache_dir = SKILL_DIR / "cache"
     cache_dir.mkdir(exist_ok=True)
     runs = cache_dir / "runs.jsonl"
@@ -665,7 +665,7 @@ def test_codex_config(r: Runner) -> None:
         r.eq(cc.get("foo.bar.does.not.exist", default="N/A"), "N/A",
              "get(missing) returns default")
 
-        # t() — pt-BR direto
+        # t() — pt-BR direct lookup
         os.environ["CODEX_LOCALE"] = "pt-BR"
         cc.clear_cache()
         r.in_("não retornou JSON estruturado",
@@ -674,7 +674,7 @@ def test_codex_config(r: Runner) -> None:
         r.in_("Timeout", cc.t("wrapper.error.timeout", timeout=30.0),
               "t pt-BR resolves with kwargs")
 
-        # t() — en-US direto
+        # t() — en-US direct lookup
         os.environ["CODEX_LOCALE"] = "en-US"
         cc.clear_cache()
         r.in_("did not return structured JSON",
@@ -742,7 +742,7 @@ def test_disable_heartbeat_silent(r: Runner) -> None:
 
 
 def test_analyze_plan_complexity(r: Runner) -> None:
-    r.section("analyze_plan_complexity × heurística de auto-sugestão")
+    r.section("analyze_plan_complexity × auto-suggestion heuristic")
     helper = SCRIPTS / "analyze_plan_complexity.py"
     if not helper.exists():
         r.fail("analyze_plan_complexity.py present", "missing")
@@ -763,8 +763,8 @@ def test_analyze_plan_complexity(r: Runner) -> None:
         r.eq(data.get("suggest_iterative"), False, "plano simples → suggest_iterative=false")
         r.le(data.get("score") or 0, 1, "plano simples → score baixo")
 
-        # Caso 2: plano sensível (cross-module + keywords + 3 fases + grande)
-        sensitive_lines = ["# Plano sensível", ""]
+        # Case 2: sensitive plan (cross-module + keywords + 3 phases + large)
+        sensitive_lines = ["# Sensitive plan", ""]
         sensitive_lines.append("Refactor de auth, payment e migration. Toca `handler/`, `service/`, `repo/` e `api/`.")
         for n in range(1, 4):
             sensitive_lines.append(f"## Phase {n}")
@@ -783,13 +783,13 @@ def test_analyze_plan_complexity(r: Runner) -> None:
         except json.JSONDecodeError:
             data = {}
         r.eq(data.get("suggest_iterative"), True,
-             "plano sensível → suggest_iterative=true")
-        r.truthy((data.get("score") or 0) >= 3, "plano sensível → score >= 3")
+             "sensitive plan → suggest_iterative=true")
+        r.truthy((data.get("score") or 0) >= 3, "sensitive plan → score >= 3")
         reasons = data.get("reasons") or []
         r.truthy(any("keywords" in (rs or "") for rs in reasons),
-                 "razões mencionam keywords sensíveis")
+                 "reasons mention sensitive keywords")
 
-        # Caso 3: arquivo missing → falha gracefully
+        # Case 3: missing file → fails gracefully
         missing = tmp / "does_not_exist.md"
         proc = subprocess.run(
             [PYTHON, str(helper), "--plan-file", str(missing)],
@@ -800,12 +800,12 @@ def test_analyze_plan_complexity(r: Runner) -> None:
         except json.JSONDecodeError:
             data = {}
         r.eq(data.get("suggest_iterative"), False,
-             "arquivo missing → suggest_iterative=false (graceful)")
-        r.eq(data.get("score") or 0, 0, "arquivo missing → score 0")
+             "missing file → suggest_iterative=false (graceful)")
+        r.eq(data.get("score") or 0, 0, "missing file → score 0")
 
 
 def test_dialogue_lifecycle(r: Runner) -> None:
-    r.section("codex_dialogue × ciclo start → next-turn → finish/abort")
+    r.section("codex_dialogue × cycle start → next-turn → finish/abort")
     dialogue = SCRIPTS / "codex_dialogue.py"
     if not dialogue.exists():
         r.fail("codex_dialogue.py present", "missing")
@@ -825,7 +825,7 @@ def test_dialogue_lifecycle(r: Runner) -> None:
             data = json.loads(proc.stdout)
         except json.JSONDecodeError:
             data = {}
-        r.eq(data.get("status"), "error", "start sem --accepted-by-user → status=error")
+        r.eq(data.get("status"), "error", "start without --accepted-by-user → status=error")
         r.eq(data.get("reason"), "needs_user_acceptance",
              "reason=needs_user_acceptance (guard rail R5-F1)")
 
@@ -861,7 +861,7 @@ def test_dialogue_lifecycle(r: Runner) -> None:
 
         # next-turn (turn 2 = limit)
         plan_v2 = tmp / "plan_v2.md"
-        plan_v2.write_text("# Plano v2\nVersão revisada.\n", encoding="utf-8")
+        plan_v2.write_text("# Plan v2\nRevised version.\n", encoding="utf-8")
         proc = subprocess.run(
             [PYTHON, str(dialogue), "next-turn", "--dialogue-id", dialogue_id, "--plan-file", str(plan_v2)],
             env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
@@ -941,7 +941,7 @@ def test_reasoning_effort_override(r: Runner) -> None:
     r.section("--reasoning-effort sobrescreve default por modo")
     with _tempdir() as tmp:
         # Caso 1: --reasoning-effort high em modo verify (default seria medium).
-        # Confirmamos que o argv recebido pelo Codex contém model_reasoning_effort=high.
+        # We confirm that the argv received by Codex contains model_reasoning_effort=high.
         payload = tmp / "payload.json"
         payload.write_text(json.dumps({
             "cwd": str(SKILL_DIR),
@@ -972,7 +972,7 @@ def test_reasoning_effort_override(r: Runner) -> None:
         else:
             r.fail("verify+--reasoning-effort high", "argv log not written")
 
-        # Caso 2: sem --reasoning-effort em modo verify → mantém default medium.
+        # Case 2: no --reasoning-effort in verify mode → keeps the medium default.
         argv_log_2 = tmp / "argv2.json"
         common_default = [
             "--cwd", str(SKILL_DIR),
@@ -989,7 +989,7 @@ def test_reasoning_effort_override(r: Runner) -> None:
         else:
             r.fail("verify default", "argv log not written")
 
-        # Caso 3: valor inválido vira warning + cai no default por modo.
+        # Case 3: invalid value emits a warning and falls back to the per-mode default.
         argv_log_3 = tmp / "argv3.json"
         common_invalid = [
             "--cwd", str(SKILL_DIR),

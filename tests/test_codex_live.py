@@ -325,7 +325,7 @@ def test_delegate_in_workspace(r: Runner) -> None:
 
 
 def test_delegate_outside_workspace(r: Runner) -> None:
-    r.section("LIVE delegate (fora do workspace — critério do plano)")
+    r.section("LIVE delegate (outside the workspace — plan criterion)")
     # Workspace where the wrapper is anchored:
     workspace = Path(tempfile.mkdtemp(prefix="codex-live-ws-"))
     # External target dir, the literal pattern from the original plan:
@@ -427,7 +427,7 @@ def test_batch_ask_real(r: Runner) -> None:
 
 
 def test_needs_input_real(r: Runner) -> None:
-    r.section("LIVE plan-review com plano vago (esperando needs_input ou findings)")
+    r.section("LIVE plan-review with vague plan (expecting needs_input or findings)")
     with _tempdir() as tmp:
         plan = tmp / "plan.md"
         plan.write_text(

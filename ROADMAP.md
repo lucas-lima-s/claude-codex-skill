@@ -1,132 +1,123 @@
-# Roadmap — skill `codex`
+# Roadmap — `codex` skill
 
-Itens registrados como evolução futura. Não implementar até que o critério
-de início esteja claro.
+Items recorded as future evolution. Do not implement until the start
+criterion is clear.
 
-## 1. Background agents (não-bloqueantes) — **IMPLEMENTADO (Phase 1)**
+## 1. Background agents (non-blocking) — **IMPLEMENTED (Phase 1)**
 
-Implementado em `scripts/codex_bg.py` com 5 subcomandos
-(`start | status | output | cancel | list`). Estado persistido em
+Implemented in `scripts/codex_bg.py` with 5 subcommands
+(`start | status | output | cancel | list`). State persisted in
 `cache/bg_runs/<run_id>/` (meta.json + output.json + stderr.log +
-cancelled.flag). Limite default de 5 runs simultâneas, configurável via
-`--max-concurrent` ou `CODEX_BG_MAX_CONCURRENT`. Cleanup automático de
-runs terminadas com mtime > 7 dias. Heartbeat redirecionado para
-`stderr.log` do próprio run (nada vai para o stderr da sessão Claude).
-Ver `SKILL.md` (seção "Modos em background").
+cancelled.flag). Default limit of 5 concurrent runs, configurable via
+`--max-concurrent` or `CODEX_BG_MAX_CONCURRENT`. Automatic cleanup of
+terminated runs older than 7 days (mtime). Heartbeat redirected to the
+run's own `stderr.log` (nothing flows to the Claude session's stderr).
+See `SKILL.md` (section "Background modes").
 
-Pendência conhecida: `bg-start delegate` ainda permite lançar `delegate`
-em background sem o protocolo de 5 campos do `delegate` síncrono. Risco
-aceito conscientemente pelo autor; revisitar quando houver fluxo seguro
-de confirmação assíncrona.
+Known caveat: `bg-start delegate` still allows launching `delegate` in
+the background without the synchronous `delegate`'s 5-field protocol.
+Risk consciously accepted by the author; revisit when there is a safe
+asynchronous confirmation flow.
 
-## 2. Conversa multi-jogada Claude ↔ Codex — **IMPLEMENTADO (Phase 2)**
+## 2. Multi-turn Claude ↔ Codex dialogue — **IMPLEMENTED (Phase 2)**
 
-Implementado em `scripts/codex_dialogue.py` (start | next-turn | status |
-finish | abort) + `scripts/analyze_plan_complexity.py` (heurística de
-auto-sugestão). Default 3 turnos, configurável via `--max-turns N` ou
-`CODEX_DIALOGUE_MAX_TURNS` (range 1-20). Estado em
-`$TEMP/codex_dialogue_<id>/`. Critérios de parada: convergência (2 turnos
-limpos consecutivos), limite de turnos, divergência (mesmo finding `high`
-em 2 turnos), abort manual. `finish` consolida `final_plan.md` +
-`dialogue_log.md`.
+Implemented in `scripts/codex_dialogue.py` (start | next-turn | status |
+finish | abort) + `scripts/analyze_plan_complexity.py` (auto-suggestion
+heuristic). Default 3 turns, configurable via `--max-turns N` or
+`CODEX_DIALOGUE_MAX_TURNS` (range 1-20). State in
+`$TEMP/codex_dialogue_<id>/`. Stop criteria: convergence (2 consecutive
+clean turns), turn limit, divergence (same `high` finding in 2 turns),
+manual abort. `finish` consolidates `final_plan.md` + `dialogue_log.md`.
 
-A auto-sugestão é gatilhada antes de qualquer `plan-review`: o Claude
-roda `analyze_plan_complexity.py`; se score >= 3 (sinais: tamanho >4KB,
->5 arquivos mencionados, >2 fases, keywords sensíveis, cross-module),
-exibe uma única linha de sugestão e pergunta antes de seguir. Ver
-`SKILL.md` (modos `plan-review` e `plan-review-iter`).
+The auto-suggestion is triggered before any `plan-review`: Claude runs
+`analyze_plan_complexity.py`; if the score is ≥ 3 (signals: size >4KB,
+>5 mentioned files, >2 phases, sensitive keywords, cross-module), it
+shows a single suggestion line and asks before proceeding. See
+`SKILL.md` (modes `plan-review` and `plan-review-iter`).
 
-Regra de transparência por turno mantida: cada turno apresenta findings
-1-a-1 traduzidos, abre `AskUserQuestion` para aprovar/rejeitar cada um,
-só então gera plano revisado. Severity alta muda o teor da pergunta
-final, nunca a ordem de divulgação.
+Per-turn transparency rule kept: every turn presents findings 1-by-1
+translated, opens `AskUserQuestion` to approve/reject each, and only
+then produces the revised plan. High severity changes the tone of the
+final question, never the order in which findings are disclosed.
 
-## 3. Profissionalização do repo público
+## 3. Public-repo polish
 
-O repo está público em https://github.com/lucas-lima-s/claude-codex-skill,
-mas só com o mínimo (LICENSE MIT, README pt-BR, `.gitignore`). Itens abaixo
-levam o repo de "código pessoal jogado no GitHub" para "skill instalável
-por outro usuário sem precisar perguntar nada".
+The repo is public at
+https://github.com/lucas-lima-s/claude-codex-skill, but only with the
+minimum (MIT LICENSE, README, `.gitignore`). The items below take the
+repo from "personal code dropped on GitHub" to "skill installable by
+another user without having to ask anything".
 
-### Estado atual
+### Current state
 
-- ✅ LICENSE (MIT), README.md (pt-BR), `.gitignore`, repo público.
-- ❌ CI, CHANGELOG, CONTRIBUTING, README/SETUP em inglês.
-- ❌ Issue/PR templates, topics, descrição em inglês no GitHub.
-- ❌ `.gitattributes` para normalizar line endings.
-- ❌ Auditoria de hardcoded paths e mistura pt-BR/inglês fora dos pontos
-  autorizados pelo `CLAUDE.md`.
+- ✅ LICENSE (MIT), README.md (English), `.gitignore`, public repo.
+- ✅ README/SETUP in English.
+- ❌ CI, CHANGELOG, CONTRIBUTING.
+- ❌ Issue/PR templates, GitHub topics, English repo description.
+- ❌ `.gitattributes` to normalise line endings.
+- ❌ Audit of hardcoded paths and stray pt-BR/English mixing outside
+  the points authorised by `CLAUDE.md`.
 
-### Tooling e qualidade
+### Tooling and quality
 
-- **CI no GitHub Actions:** lint (ruff/black/mypy se aplicável) + suite
-  mockada (`tests/test_codex_skill.py`) cross-platform (`ubuntu-latest`
-  e `windows-latest`) em push e PR. **Excluir** `test_codex_live.py`
-  do CI (gasta tokens contra o Codex real) ou usar `FAKE_CODEX_BEHAVIOR`
-  para mockar.
-- **Issue templates + PR template:** versões básicas
+- **GitHub Actions CI:** lint (ruff/black/mypy where applicable) + the
+  mocked suite (`tests/test_codex_skill.py`) cross-platform
+  (`ubuntu-latest` and `windows-latest`) on push and PR. **Exclude**
+  `test_codex_live.py` from CI (it spends tokens against the real
+  Codex) or use `FAKE_CODEX_BEHAVIOR` to mock it.
+- **Issue templates + PR template:** basic versions
   (`.github/ISSUE_TEMPLATE/bug_report.md`, `feature_request.md`,
   `.github/PULL_REQUEST_TEMPLATE.md`).
-- **`.gitattributes`** com `* text=auto eol=lf` (ou similar) para
-  evitar confusão de CRLF/LF entre contribuintes Windows e Linux.
+- **`.gitattributes`** with `* text=auto eol=lf` (or similar) to
+  prevent CRLF/LF confusion between Windows and Linux contributors.
 
-### Documentação e identidade
+### Documentation and identity
 
-- **README em inglês** como primário (alcance público maior); README
-  pt-BR vira `README.pt-BR.md` ou seção secundária. Inclui demo/screenshot
-  de um `plan-review` real renderizado em markdown.
-- **SETUP em inglês** (`SETUP.md` em inglês + `SETUP.pt-BR.md`).
-- **ROADMAP traduzido** para inglês.
-- **CHANGELOG.md retroativo** cobrindo as fases anteriores
-  (Phase 0–3 do desenvolvimento da skill).
-- **CONTRIBUTING.md** com setup local, como rodar testes mockados,
-  como adicionar um novo modo, política de commits.
-- **Topics no GitHub:** `claude-code`, `codex`, `skill`, `cli`,
+- **CHANGELOG.md (retroactive)** covering the previous phases
+  (Phase 0–3 of skill development).
+- **CONTRIBUTING.md** with local setup, how to run mocked tests, how
+  to add a new mode, commit policy.
+- **GitHub topics:** `claude-code`, `codex`, `skill`, `cli`,
   `automation`, `python`.
-- **Descrição do repo (1 linha em inglês):**
+- **Repo description (one-liner, English):**
   *"Claude Code skill that delegates plan reviews, verifications, and
   tasks to OpenAI Codex CLI."*
 
-### Critério de aceitação
+### Acceptance criteria
 
-- Outro usuário (não-Lucas) consegue clonar, configurar `$SKILLS_PYTHON`,
-  e rodar a suite de testes em <10 min seguindo só os docs.
-- CI verde em ambas as plataformas para a suite mockada.
-- Nenhum path hardcoded para a máquina pessoal.
-- Nenhuma string em pt-BR fora dos pontos onde a regra do `CLAUDE.md`
-  autoriza (description da skill, instruções de trigger pt-BR no
-  `SKILL.md`, mensagens user-facing intencionais).
+- Another user (not Lucas) can clone, configure `$SKILLS_PYTHON`, and
+  run the test suite in <10 min following only the docs.
+- Green CI on both platforms for the mocked suite.
+- No paths hardcoded to the personal machine.
+- No pt-BR string outside the points where `CLAUDE.md` authorises it
+  (skill description, pt-BR trigger phrases in `SKILL.md`, intentional
+  user-facing messages keyed by locale).
 
-### Ordem sugerida
+### Suggested order
 
-1. Auditoria de hardcoded paths e strings pt-BR/inglês (Grep cego no repo).
-2. `.gitattributes` (antes de qualquer outra mudança em arquivos).
-3. README.md em inglês (mais alto impacto público).
-4. SETUP.md em inglês (ou criar `SETUP.en.md`).
-5. ROADMAP.md traduzido.
-6. CHANGELOG.md retroativo (Phase 0–3).
-7. CONTRIBUTING.md.
-8. GitHub Actions workflow (lint + suite mockada).
-9. Issue templates + PR template.
-10. Topics + descrição do repo (ação manual no GitHub).
+1. Audit hardcoded paths and pt-BR/English strings (blind Grep across
+   the repo).
+2. `.gitattributes` (before any other file change).
+3. CHANGELOG.md (retroactive Phase 0–3).
+4. CONTRIBUTING.md.
+5. GitHub Actions workflow (lint + mocked suite).
+6. Issue templates + PR template.
+7. GitHub topics + repo description (manual GitHub action).
 
-### Decisões pendentes
+### Open decisions
 
-- README primário em inglês com pt-BR secundário, ou manter pt-BR primário
-  e adicionar versão em inglês?
-- Strings user-facing dos scripts (errors, prints) — manter pt-BR,
-  adicionar i18n simples, ou converter para inglês? A regra atual do
-  `CLAUDE.md` permite pt-BR para texto que o usuário vê no terminal.
-- CI agora ou só após estabilizar itens 1 e 2 deste roadmap?
-- Aceitar contribuições externas via PR ou manter como repo "read-only
-  para o público, write-only para o autor"?
+- Add a `README.pt-BR.md` as a secondary translation, or stick with
+  English-only?
+- CI now or only after items 1–2 of this roadmap stabilise?
+- Accept external contributions via PR or keep the repo "read-only for
+  the public, write-only for the author"?
 
-## 4. (Aberto) Outros itens
+## 4. (Open) Other items
 
-- Streaming de eventos `codex exec --json` com parser robusto (hoje a flag
-  é opt-in mas o output é tratado como raw — beneficia heartbeat e parse
-  parcial).
-- Cache de revisões por fingerprint do packet — evita re-revisar plano
-  idêntico já visto.
-- Modo `repro` que dado um `run_id` regrava prompt + output em pasta
-  legível pra debug humano.
+- `codex exec --json` event streaming with a robust parser (today the
+  flag is opt-in but the output is treated as raw — would benefit
+  heartbeat and partial parsing).
+- Review caching by packet fingerprint — avoids re-reviewing an
+  identical plan already seen.
+- `repro` mode that, given a `run_id`, replays prompt + output into a
+  human-readable folder for debugging.

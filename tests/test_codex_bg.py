@@ -175,7 +175,7 @@ def _purge_bg_runs() -> None:
 # ----------------------------------------------------------------------- tests
 
 def test_start_status_output(r: Runner) -> None:
-    r.section("bg start → status → output (caminho feliz)")
+    r.section("bg start → status → output (happy path)")
     _purge_bg_runs()
     with _tempdir() as tmp:
         plan = tmp / "p.md"
@@ -215,13 +215,13 @@ def test_start_status_output(r: Runner) -> None:
 
 
 def test_output_while_running(r: Runner) -> None:
-    r.section("bg output × ainda em execução")
+    r.section("bg output × still running")
     _purge_bg_runs()
     with _tempdir() as tmp:
         plan = tmp / "p.md"
         plan.write_text("delay test\n", encoding="utf-8")
-        # delay_long faz o fake dormir 35s — tempo de sobra para checar
-        # status enquanto running. Vamos override pra 8s pra não atrasar.
+        # delay_long makes the fake sleep 35s — plenty of time to check
+        # status while running. Override to 8s to avoid slowing the suite down.
         env = _bg_env(behavior="delay_long",
                       extra={"FAKE_CODEX_DELAY_SECONDS": "8"})
         result, _ = _run_bg(
@@ -235,25 +235,25 @@ def test_output_while_running(r: Runner) -> None:
             r.fail("start produced no run_id", str(result))
             return
 
-        # logo após o start: ainda running
+        # right after start: still running
         time.sleep(1.0)
         st, _ = _run_bg(["status", run_id], env=env)
         r.eq(st.get("status"), "running", "status=running while subprocess alive")
         r.eq(st.get("pid_alive"), True, "pid_alive=true while subprocess alive")
 
-        # output enquanto running: deve recusar com still_running
+        # output while running: must refuse with still_running
         out, _ = _run_bg(["output", run_id], env=env)
         r.eq(out.get("status"), "error",
              "output returns error while still running")
         r.eq(out.get("reason"), "still_running",
              "reason=still_running")
 
-        # esperar terminar para limpar
+        # wait for completion to clean up
         _wait_for_done(run_id, env=env, max_wait=20.0)
 
 
 def test_cancel(r: Runner) -> None:
-    r.section("bg cancel mata a run e marca cancelled")
+    r.section("bg cancel kills the run and marks cancelled")
     _purge_bg_runs()
     with _tempdir() as tmp:
         plan = tmp / "p.md"
@@ -278,7 +278,7 @@ def test_cancel(r: Runner) -> None:
         r.eq(cancel_result.get("was_alive"), True,
              "cancel reports the run was alive at the time")
 
-        # A flag está gravada e a meta atualizada — status deve refletir cancelled.
+        # The flag is written and the meta is updated — status must reflect cancelled.
         time.sleep(1.5)
         st, _ = _run_bg(["status", run_id], env=env)
         r.eq(st.get("status"), "cancelled",
@@ -290,7 +290,7 @@ def test_cancel(r: Runner) -> None:
 
 
 def test_list_orders_runs(r: Runner) -> None:
-    r.section("bg list ordena por started_at desc")
+    r.section("bg list orders by started_at desc")
     _purge_bg_runs()
     with _tempdir() as tmp:
         plan = tmp / "p.md"
@@ -308,7 +308,7 @@ def test_list_orders_runs(r: Runner) -> None:
             rid = res.get("run_id")
             if rid:
                 run_ids.append(rid)
-            time.sleep(1.1)  # garantir started_at distinto (precisão de 1s)
+            time.sleep(1.1)  # ensure distinct started_at (1s precision)
 
         for rid in run_ids:
             _wait_for_done(rid, env=env, max_wait=10.0)
@@ -319,8 +319,8 @@ def test_list_orders_runs(r: Runner) -> None:
         r.truthy(len(runs) >= 3, f"list contains the 3 runs we just created (got {len(runs)})")
 
         listed_ids = [r_["run_id"] for r_ in runs[:3]]
-        # Os 3 últimos do topo da lista devem ser os recém-criados, em ordem
-        # decrescente de started_at (último criado primeiro).
+        # The top 3 entries in the list must be the freshly created ones,
+        # in descending started_at order (most recent first).
         expected_top = list(reversed(run_ids))
         r.eq(listed_ids, expected_top,
              "list orders runs by started_at desc")
