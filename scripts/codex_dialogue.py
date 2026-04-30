@@ -166,12 +166,18 @@ def _summarise_turn(turn: int, findings_payload: Dict[str, Any]) -> str:
         sev = (f.get("severity") or "").strip()
         loc = (f.get("location") or "").strip()
         bits = [b for b in [sev, title, loc] if b]
-        titles.append(" / ".join(bits) if bits else "<sem título>")
-    bullets = "\n".join(f"  - {t}" for t in titles) or "  - (nenhum)"
+        titles.append(" / ".join(bits) if bits else t("dialogue.history.untitled"))
+    bullets = "\n".join(f"  - {title}" for title in titles) or f"  - {t('dialogue.history.no_findings')}"
     return (
-        f"Turno {turn} (severity={severity}, {len(findings)} finding(s))\n"
-        f"  Resumo: {summary_short}\n"
-        f"  Findings:\n{bullets}"
+        t(
+            "dialogue.history.turn_header",
+            turn=turn,
+            severity=severity,
+            n=len(findings),
+        ) + "\n"
+        + t("dialogue.history.summary_label", summary=summary_short) + "\n"
+        + t("dialogue.history.findings_label") + "\n"
+        + bullets
     )
 
 
@@ -381,11 +387,7 @@ def cmd_next_turn(args: argparse.Namespace) -> int:
     (dialogue_dir / f"turn_{next_turn}_plan.md").write_text(plan_text, encoding="utf-8")
 
     history_text = _build_history(dialogue_dir, up_to_turn=next_turn - 1)
-    history_preface = (
-        "Histórico do diálogo iterativo (turnos anteriores). "
-        "Foque na revisão das mudanças do plano atual em relação ao turno anterior.\n\n"
-        + history_text
-    )
+    history_preface = t("dialogue.history.preface") + history_text
 
     cwd = Path(meta.get("cwd") or os.getcwd())
     findings = _invoke_wrapper_plan_review(
@@ -475,22 +477,24 @@ def cmd_finish(args: argparse.Namespace) -> int:
             log_lines.append(f"Stop details: {json.dumps(stop_details, ensure_ascii=False)}")
     log_lines.append("")
 
-    log_lines.append("## Resumo por turno")
+    log_lines.append(t("dialogue.log.summary_section"))
     log_lines.append("")
-    log_lines.append("| Turno | severity | findings | block | summary (curto) |")
+    log_lines.append(t("dialogue.log.table_header"))
     log_lines.append("|---|---|---|---|---|")
+    block_yes = t("dialogue.log.block_yes")
+    block_no = t("dialogue.log.block_no")
     for n in range(1, current_turn + 1):
         f = _read_findings(dialogue_dir, n) or {}
         sev = f.get("severity", "?")
         nf = len(f.get("findings") or [])
-        block = "sim" if f.get("block_recommended") else "não"
+        block = block_yes if f.get("block_recommended") else block_no
         summary = (f.get("summary") or "").replace("|", "/").replace("\n", " ")
         if len(summary) > 80:
             summary = summary[:77] + "..."
         log_lines.append(f"| {n} | {sev} | {nf} | {block} | {summary} |")
     log_lines.append("")
 
-    log_lines.append("## Findings pendentes")
+    log_lines.append(t("dialogue.log.pending_section"))
     log_lines.append("")
     last_payload = _read_findings(dialogue_dir, current_turn) or {}
     pending = last_payload.get("findings") or []
@@ -503,12 +507,12 @@ def cmd_finish(args: argparse.Namespace) -> int:
             loc = f.get("location", "?")
             log_lines.append(f"{i}. **[{sev}] {title}** — `{loc}`")
     else:
-        log_lines.append("_Nenhum finding pendente no último turno._")
+        log_lines.append(t("dialogue.log.no_pending"))
     log_lines.append("")
 
-    log_lines.append("## Plano final")
+    log_lines.append(t("dialogue.log.final_plan_section"))
     log_lines.append("")
-    log_lines.append(f"Caminho: `{final_plan_path}`")
+    log_lines.append(t("dialogue.log.final_plan_path_label", path=final_plan_path))
     log_lines.append("")
 
     log_path = dialogue_dir / "dialogue_log.md"

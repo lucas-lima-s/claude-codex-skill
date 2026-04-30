@@ -10,10 +10,10 @@ Output JSON (stdout, single line, UTF-8)::
         "score": 7,
         "suggest_iterative": true,
         "reasons": [
-            "8 arquivos distintos mencionados (>5)",
-            "3 fases explícitas (Phase 1/2/3)",
-            "tocar auth/ + api/ (cross-module sensível)",
-            "tamanho 6.2 KB (>4 KB)"
+            "8 distinct files mentioned (>5)",
+            "3 explicit phases (Phase 1/2/3)",
+            "cross-module: auth/ + api/",
+            "size 6.2 KB (>4 KB)"
         ]
     }
 
@@ -144,29 +144,41 @@ def _score_plan(plan_path: Path) -> Tuple[int, List[str]]:
 
     if size_bytes > SIZE_THRESHOLD_BYTES:
         score += 1
-        reasons.append(f"tamanho {size_bytes / 1024:.1f} KB (>{SIZE_THRESHOLD_BYTES // 1024} KB)")
+        reasons.append(t(
+            "complexity.reasons.size",
+            kb=f"{size_bytes / 1024:.1f}",
+            threshold=SIZE_THRESHOLD_BYTES // 1024,
+        ))
 
     distinct_files = _count_distinct_files(text)
     if distinct_files > DISTINCT_FILES_THRESHOLD:
         score += 1
-        reasons.append(f"{distinct_files} arquivos distintos mencionados (>{DISTINCT_FILES_THRESHOLD})")
+        reasons.append(t(
+            "complexity.reasons.distinct_files",
+            n=distinct_files,
+            threshold=DISTINCT_FILES_THRESHOLD,
+        ))
 
     phases = _count_phases(text)
     if phases > PHASES_THRESHOLD:
         score += 1
-        reasons.append(f"{phases} fases explícitas (>{PHASES_THRESHOLD})")
+        reasons.append(t(
+            "complexity.reasons.phases",
+            n=phases,
+            threshold=PHASES_THRESHOLD,
+        ))
 
     sensitive_hits = _sensitive_keywords_hit(text)
     if sensitive_hits:
         score += 1
         kws = ", ".join(sensitive_hits[:5])
-        reasons.append(f"keywords sensíveis: {kws}")
+        reasons.append(t("complexity.reasons.sensitive_keywords", kws=kws))
 
     cross_hits = _cross_module_hits(text)
     if len(cross_hits) >= 2:
         score += 1
         kws = " + ".join(cross_hits[:4])
-        reasons.append(f"cross-module: {kws}")
+        reasons.append(t("complexity.reasons.cross_module", kws=kws))
 
     return score, reasons
 
