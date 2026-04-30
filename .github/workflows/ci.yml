@@ -1,0 +1,39 @@
+name: ci
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  test:
+    name: ${{ matrix.os }} / py${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.10", "3.12"]
+    env:
+      CODEX_LOCALE: en-US
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dev dependencies
+        run: python -m pip install --upgrade pip && python -m pip install -r requirements-dev.txt
+
+      - name: Lint (ruff)
+        run: python -m ruff check .
+
+      - name: Format check (black)
+        run: python -m black --check .
+
+      - name: Mocked test suite
+        run: python tests/test_codex_skill.py
