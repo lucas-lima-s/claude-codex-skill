@@ -20,6 +20,7 @@ Selection priority when more than 12 files are cited:
   2. files mentioned more than once;
   3. the original mention order.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -29,7 +30,6 @@ import subprocess
 import sys
 from collections import OrderedDict
 from pathlib import Path
-from typing import List, Optional, Tuple
 
 DEFAULT_MAX_FILES = 12
 DEFAULT_MAX_LINES = 300
@@ -60,11 +60,11 @@ def _read_text_safely(path: Path) -> str:
             return ""
 
 
-def _resolve_cited(token: str, cwd: Path, target_path: Optional[Path]) -> Optional[Path]:
+def _resolve_cited(token: str, cwd: Path, target_path: Path | None) -> Path | None:
     candidate = token.replace("\\", "/")
     if candidate.startswith(("./", "../")):
         candidate = candidate[2:] if candidate.startswith("./") else candidate
-    bases: List[Path] = []
+    bases: list[Path] = []
     if target_path is not None:
         bases.append(target_path)
     bases.append(cwd)
@@ -93,14 +93,12 @@ class _CitedEntry:
         self.first_index: int = first_index
 
 
-def _detect_cited_files(
-    plan_text: str, cwd: Path, target_path: Optional[Path]
-) -> "OrderedDict[Path, _CitedEntry]":
+def _detect_cited_files(plan_text: str, cwd: Path, target_path: Path | None) -> OrderedDict[Path, _CitedEntry]:
     """Resolve every plausible file reference in ``plan_text``.
 
     Iteration order matches first mention so callers can apply the priority rules.
     """
-    found: "OrderedDict[Path, _CitedEntry]" = OrderedDict()
+    found: OrderedDict[Path, _CitedEntry] = OrderedDict()
     index = 0
     for match in PATH_TOKEN_RE.finditer(plan_text):
         token = match.group(1)
@@ -122,18 +120,16 @@ def _detect_cited_files(
     return found
 
 
-def _select_files(
-    cited: "OrderedDict[Path, _CitedEntry]", limit: int
-) -> Tuple[List[Path], List[Path]]:
+def _select_files(cited: OrderedDict[Path, _CitedEntry], limit: int) -> tuple[list[Path], list[Path]]:
     """Return (selected, skipped) honouring the documented priority rules."""
     if not cited:
         return [], []
     items = list(cited.items())
     items.sort(
         key=lambda item: (
-            0 if item[1].lines else 1,   # lines-cited first
-            -item[1].count,              # frequency desc
-            item[1].first_index,         # original order
+            0 if item[1].lines else 1,  # lines-cited first
+            -item[1].count,  # frequency desc
+            item[1].first_index,  # original order
         )
     )
     selected = [path for path, _ in items[:limit]]
@@ -141,9 +137,7 @@ def _select_files(
     return selected, skipped
 
 
-def _file_window(
-    text: str, cited_lines: List[int], max_lines: int
-) -> Tuple[List[Tuple[int, str]], int, str]:
+def _file_window(text: str, cited_lines: list[int], max_lines: int) -> tuple[list[tuple[int, str]], int, str]:
     """Return ([(line_no, line_content), ...], total_lines, selection_reason)."""
     raw_lines = text.splitlines()
     total = len(raw_lines)
@@ -166,7 +160,9 @@ def _git_branch(cwd: Path) -> str:
     try:
         proc = subprocess.run(
             ["git", "-C", str(cwd), "rev-parse", "--abbrev-ref", "HEAD"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
     except (OSError, subprocess.TimeoutExpired):
         return ""
@@ -179,7 +175,9 @@ def _git_status(cwd: Path) -> str:
     try:
         proc = subprocess.run(
             ["git", "-C", str(cwd), "status", "--short"],
-            capture_output=True, text=True, timeout=15,
+            capture_output=True,
+            text=True,
+            timeout=15,
         )
     except (OSError, subprocess.TimeoutExpired):
         return ""
@@ -188,7 +186,7 @@ def _git_status(cwd: Path) -> str:
     return (proc.stdout or "").rstrip()
 
 
-def _collect_context(cwd: Path, target_path: Optional[Path]) -> str:
+def _collect_context(cwd: Path, target_path: Path | None) -> str:
     helper = Path(__file__).resolve().parent / "collect_claude_context.py"
     python = os.environ.get("SKILLS_PYTHON") or os.environ.get("CLAUDE_AUTOMATION_PYTHON") or sys.executable
     cmd = [python, str(helper), "--cwd", str(cwd), "--format", "text"]
@@ -210,12 +208,12 @@ def _format_section_header(title: str) -> str:
 def _build_packet(
     plan_text: str,
     cwd: Path,
-    target_path: Optional[Path],
+    target_path: Path | None,
     transcript_text: str,
     max_files: int,
     max_lines: int,
     max_bytes: int,
-) -> Tuple[str, List[str]]:
+) -> tuple[str, list[str]]:
     cited = _detect_cited_files(plan_text, cwd, target_path)
     selected, skipped = _select_files(cited, max_files)
 
@@ -223,8 +221,8 @@ def _build_packet(
     status_short = _git_status(cwd)
     context_text = _collect_context(cwd, target_path)
 
-    parts: List[str] = []
-    manifest: List[str] = []
+    parts: list[str] = []
+    manifest: list[str] = []
 
     parts.append("# Plan-review packet")
     parts.append(_format_section_header("Plan"))
@@ -261,16 +259,12 @@ def _build_packet(
             start_line = window[0][0]
             end_line = window[-1][0]
             parts.append(f"\n### {path}\n")
-            parts.append(
-                f"_lines {start_line}-{end_line} of {total}; selection: {reason}_\n"
-            )
+            parts.append(f"_lines {start_line}-{end_line} of {total}; selection: {reason}_\n")
             parts.append("```")
             for line_no, content in window:
                 parts.append(f"{line_no:>5}: {content}")
             parts.append("```")
-            manifest.append(
-                f"{path}: lines {start_line}-{end_line}/{total} ({reason})"
-            )
+            manifest.append(f"{path}: lines {start_line}-{end_line}/{total} ({reason})")
 
     for path in skipped:
         manifest.append(f"{path}: skipped (max_files={max_files} exceeded)")
@@ -297,10 +291,7 @@ def _build_packet(
             body = cut.decode("utf-8")
         except UnicodeDecodeError:
             body = cut.decode("utf-8", errors="ignore")
-        body += (
-            "\n\n[packet truncated: exceeded max_bytes="
-            f"{max_bytes}; original_size={len(encoded)} bytes]\n"
-        )
+        body += "\n\n[packet truncated: exceeded max_bytes=" f"{max_bytes}; original_size={len(encoded)} bytes]\n"
 
     final_size = len(body.encode("utf-8"))
     body += f"\n\n_packet bytes: {final_size}_\n"
@@ -310,7 +301,7 @@ def _build_packet(
     return body, manifest
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Build a plan-review packet.")
     parser.add_argument("--plan-file", required=True)
     parser.add_argument("--cwd", required=True)

@@ -14,19 +14,20 @@ preserving any other keys.
 All output goes to stderr (consistent with ``setup.py``); stdout stays
 silent so the caller can chain commands without parsing pollution.
 """
+
 from __future__ import annotations
 
 import argparse
 import json
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 VALID_LOCALES = ["en-US", "pt-BR"]
 LOCAL_PATH = Path(__file__).resolve().parent.parent / "config.local.json"
 
 
-def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     out = dict(base)
     for key, value in override.items():
         if key in out and isinstance(out[key], dict) and isinstance(value, dict):
@@ -36,7 +37,7 @@ def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any
     return out
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Set the codex skill interface locale (non-interactive).",
     )
@@ -48,7 +49,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    current: Dict[str, Any] = {}
+    current: dict[str, Any] = {}
     if LOCAL_PATH.exists():
         try:
             loaded = json.loads(LOCAL_PATH.read_text(encoding="utf-8"))
@@ -56,7 +57,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 current = loaded
         except (OSError, json.JSONDecodeError):
             print(
-                f"Warning: existing config.local.json is malformed; rewriting.",
+                "Warning: existing config.local.json is malformed; rewriting.",
                 file=sys.stderr,
             )
 

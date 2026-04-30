@@ -1,23 +1,23 @@
-# Telemetria local — paths e timestamps específicos da máquina
+# Local telemetry — machine-specific paths and timestamps
 cache/
 __pycache__/
 *.py[cod]
 *.pyo
 *.egg-info/
 
-# Editores
+# Editors
 .vscode/
 .idea/
 *.swp
 
-# Sistema
+# System
 .DS_Store
 Thumbs.db
 
-# Outputs temporários (caso alguém rode os scripts a partir do repo)
+# Temporary outputs (in case scripts are run from inside the repo)
 *.log
 *.tmp
 
-# Override local de configuração (deep-merge sobre config.default.json).
-# Cada usuário pode customizar settings/locales sem versionar.
+# Local configuration override (deep-merged over config.default.json).
+# Each user can customize settings/locales without committing them.
 config.local.json

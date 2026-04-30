@@ -12,6 +12,7 @@ wizard is auto-triggered before a wrapper invocation.
 Usage:
     python scripts/setup.py
 """
+
 from __future__ import annotations
 
 import json
@@ -20,7 +21,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 BIN_DIR = Path(__file__).resolve().parent
 SKILL_DIR = BIN_DIR.parent
@@ -38,7 +39,7 @@ def say(msg: str) -> None:
     print(msg, file=sys.stderr, flush=True)
 
 
-def _read_local_config() -> Dict[str, Any]:
+def _read_local_config() -> dict[str, Any]:
     if not LOCAL_PATH.exists():
         return {}
     try:
@@ -48,7 +49,7 @@ def _read_local_config() -> Dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
-def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     out = dict(base)
     for k, v in override.items():
         if k in out and isinstance(out[k], dict) and isinstance(v, dict):
@@ -58,7 +59,7 @@ def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any
     return out
 
 
-def _current_locale(local: Dict[str, Any]) -> str:
+def _current_locale(local: dict[str, Any]) -> str:
     settings = local.get("settings") if isinstance(local, dict) else None
     if isinstance(settings, dict):
         value = settings.get("locale")
@@ -112,7 +113,9 @@ def _validate_codex_cli() -> None:
     try:
         proc = subprocess.run(
             [codex_path, "--version"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
     except (subprocess.TimeoutExpired, OSError):
         say(codex_config.t("setup.validation.codex_missing"))
@@ -128,30 +131,30 @@ def _validate_python() -> None:
         executable = skills_python
     else:
         executable = sys.executable
-        say(codex_config.t(
-            "setup.validation.python_warn_skills_python",
-            executable=executable,
-        ))
+        say(
+            codex_config.t(
+                "setup.validation.python_warn_skills_python",
+                executable=executable,
+            )
+        )
         return
-    version = "{}.{}.{}".format(
-        sys.version_info.major,
-        sys.version_info.minor,
-        sys.version_info.micro,
+    version = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+    say(
+        codex_config.t(
+            "setup.validation.python_ok",
+            executable=executable,
+            version=version,
+        )
     )
-    say(codex_config.t(
-        "setup.validation.python_ok",
-        executable=executable,
-        version=version,
-    ))
 
 
-def _credentials_sources() -> List[Path]:
+def _credentials_sources() -> list[Path]:
     raw = codex_config.get("credentials.source", "~/.claude/credentials.env")
     if isinstance(raw, str):
         raw = [raw]
     elif not isinstance(raw, list):
         return []
-    paths: List[Path] = []
+    paths: list[Path] = []
     for entry in raw:
         if not isinstance(entry, str):
             continue
@@ -163,7 +166,7 @@ def _credentials_sources() -> List[Path]:
     return paths
 
 
-def _keys_present(sources: List[Path], wanted: List[str]) -> Dict[str, bool]:
+def _keys_present(sources: list[Path], wanted: list[str]) -> dict[str, bool]:
     found = {key: False for key in wanted}
     for path in sources:
         if not path.exists():
@@ -186,22 +189,26 @@ def _validate_credentials() -> None:
     propagate = codex_config.get("credentials.propagate", []) or []
     if not isinstance(propagate, list):
         propagate = []
-    keys: List[str] = [k for k in propagate if isinstance(k, str) and k.strip()]
+    keys: list[str] = [k for k in propagate if isinstance(k, str) and k.strip()]
     if not keys:
         say(codex_config.t("setup.validation.credentials_none"))
     else:
-        say(codex_config.t(
-            "setup.validation.credentials_header",
-            list=", ".join(keys),
-        ))
+        say(
+            codex_config.t(
+                "setup.validation.credentials_header",
+                list=", ".join(keys),
+            )
+        )
         sources = _credentials_sources()
         present = _keys_present(sources, keys)
         for key in keys:
             if not present.get(key):
-                say(codex_config.t(
-                    "setup.validation.credentials_missing_warn",
-                    key=key,
-                ))
+                say(
+                    codex_config.t(
+                        "setup.validation.credentials_missing_warn",
+                        key=key,
+                    )
+                )
     say(codex_config.t("setup.validation.credentials_hint"))
 
 
