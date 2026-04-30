@@ -115,7 +115,26 @@ def _detect_mode_hint(stdin_text: str) -> str:
     return "review"
 
 
+def _maybe_dump_argv() -> None:
+    """When FAKE_CODEX_ARGV_LOG_FILE is set, dump the received argv there.
+
+    Allows tests to assert which flags the wrapper actually forwarded
+    without coupling to the success/failure behavior of the fake.
+    """
+    log_path = os.environ.get("FAKE_CODEX_ARGV_LOG_FILE")
+    if not log_path:
+        return
+    try:
+        Path(log_path).write_text(
+            json.dumps({"argv": list(sys.argv[1:])}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+    except OSError:
+        pass
+
+
 def main() -> int:
+    _maybe_dump_argv()
     args, _ = _parse_codex_args(sys.argv[1:])
     behavior = os.environ.get("FAKE_CODEX_BEHAVIOR", "success").strip().lower()
 

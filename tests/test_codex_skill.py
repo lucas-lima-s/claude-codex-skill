@@ -658,6 +658,79 @@ def test_disable_heartbeat_silent(r: Runner) -> None:
                 "heartbeat suppressed when env=1")
 
 
+def test_reasoning_effort_override(r: Runner) -> None:
+    r.section("--reasoning-effort sobrescreve default por modo")
+    with _tempdir() as tmp:
+        # Caso 1: --reasoning-effort high em modo verify (default seria medium).
+        # Confirmamos que o argv recebido pelo Codex contém model_reasoning_effort=high.
+        payload = tmp / "payload.json"
+        payload.write_text(json.dumps({
+            "cwd": str(SKILL_DIR),
+            "last_assistant_message": "x",
+            "transcript_path": "",
+            "git_status_short": "",
+            "git_diff_worktree": "",
+            "git_diff_cached": "",
+            "changed_files_from_transcript": [],
+        }), encoding="utf-8")
+        argv_log = tmp / "argv.json"
+        common = [
+            "--cwd", str(SKILL_DIR),
+            "--payload-file", str(payload),
+            "--reasoning-effort", "high",
+        ]
+        _run_wrapper(
+            "verify", "success", common,
+            extra_env={"FAKE_CODEX_ARGV_LOG_FILE": str(argv_log)},
+        )
+        if argv_log.exists():
+            argv = json.loads(argv_log.read_text(encoding="utf-8")).get("argv", [])
+            argv_str = " ".join(argv)
+            r.in_("model_reasoning_effort=high", argv_str,
+                  "verify+--reasoning-effort high → high passed to Codex")
+            r.falsy("model_reasoning_effort=medium" in argv_str,
+                    "verify+--reasoning-effort high → medium NOT in argv")
+        else:
+            r.fail("verify+--reasoning-effort high", "argv log not written")
+
+        # Caso 2: sem --reasoning-effort em modo verify → mantém default medium.
+        argv_log_2 = tmp / "argv2.json"
+        common_default = [
+            "--cwd", str(SKILL_DIR),
+            "--payload-file", str(payload),
+        ]
+        _run_wrapper(
+            "verify", "success", common_default,
+            extra_env={"FAKE_CODEX_ARGV_LOG_FILE": str(argv_log_2)},
+        )
+        if argv_log_2.exists():
+            argv_str = " ".join(json.loads(argv_log_2.read_text(encoding="utf-8")).get("argv", []))
+            r.in_("model_reasoning_effort=medium", argv_str,
+                  "verify default → medium preserved (no regression)")
+        else:
+            r.fail("verify default", "argv log not written")
+
+        # Caso 3: valor inválido vira warning + cai no default por modo.
+        argv_log_3 = tmp / "argv3.json"
+        common_invalid = [
+            "--cwd", str(SKILL_DIR),
+            "--payload-file", str(payload),
+            "--reasoning-effort", "ultraplus",
+        ]
+        _, stderr_3, _ = _run_wrapper(
+            "verify", "success", common_invalid,
+            extra_env={"FAKE_CODEX_ARGV_LOG_FILE": str(argv_log_3)},
+        )
+        if argv_log_3.exists():
+            argv_str = " ".join(json.loads(argv_log_3.read_text(encoding="utf-8")).get("argv", []))
+            r.in_("model_reasoning_effort=medium", argv_str,
+                  "invalid --reasoning-effort → falls back to per-mode default")
+            r.in_("ultraplus", stderr_3,
+                  "invalid --reasoning-effort → warning to stderr")
+        else:
+            r.fail("verify+invalid effort", "argv log not written")
+
+
 # ----------------------------------------------------------------------- main
 
 def main() -> int:
@@ -689,6 +762,7 @@ def main() -> int:
     test_telemetry_rotation(r)
     test_ps1_stub(r)
     test_disable_heartbeat_silent(r)
+    test_reasoning_effort_override(r)
 
     duration = time.monotonic() - started
     print()

@@ -88,6 +88,8 @@ MODE_REASONING: Dict[str, str] = {
     "insight":     "xhigh",
 }
 
+VALID_REASONING_EFFORTS = ("low", "medium", "high", "xhigh")
+
 REVIEW_MODES = ("plan-review", "verify", "ask", "insight")
 ALL_MODES = ("plan-review", "verify", "delegate", "ask", "insight")
 
@@ -273,7 +275,12 @@ def _codex_base_cmd() -> List[str]:
     return [resolved, "exec"]
 
 
-def _build_codex_command(mode: str, cwd: Path, output_file: Path) -> List[str]:
+def _build_codex_command(
+    mode: str,
+    cwd: Path,
+    output_file: Path,
+    effort_override: Optional[str] = None,
+) -> List[str]:
     base = _codex_base_cmd()
     if not base:
         return []
@@ -290,7 +297,7 @@ def _build_codex_command(mode: str, cwd: Path, output_file: Path) -> List[str]:
         "-C", str(cwd),
         "-o", str(output_file),
     ]
-    effort = MODE_REASONING.get(mode)
+    effort = effort_override or MODE_REASONING.get(mode)
     if effort:
         cmd += ["-c", f"model_reasoning_effort={effort}"]
     if mode in REVIEW_MODES and SCHEMA_FILE.exists():
@@ -405,6 +412,7 @@ def _run_codex_once(
     cwd: Path,
     timeout: float,
     heartbeat: _Heartbeat,
+    effort_override: Optional[str] = None,
 ) -> Tuple[str, int, Optional[str]]:
     """Run Codex once. Returns (raw_output, exit_code, error_summary).
 
@@ -420,7 +428,7 @@ def _run_codex_once(
 
     try:
         heartbeat.output_path = out_path
-        cmd = _build_codex_command(mode, cwd, out_path)
+        cmd = _build_codex_command(mode, cwd, out_path, effort_override=effort_override)
         if not cmd:
             return "", -1, "Codex CLI not available (override missing or not on PATH)."
 
@@ -606,13 +614,16 @@ def _invoke_codex(
     cwd: Path,
     timeout: float,
     heartbeat: _Heartbeat,
+    effort_override: Optional[str] = None,
 ) -> Tuple[Dict[str, Any], int, int]:
     """Run Codex with one optional retry on JSON parse failure.
 
     Returns ``(normalized_result, retry_count, last_exit_code)``.
     """
     started_at = time.monotonic()
-    raw, exit_code, err = _run_codex_once(mode, prompt, cwd, timeout, heartbeat)
+    raw, exit_code, err = _run_codex_once(
+        mode, prompt, cwd, timeout, heartbeat, effort_override=effort_override,
+    )
     retry_count = 0
 
     if err is not None:
@@ -627,7 +638,9 @@ def _invoke_codex(
     if _wants_retry(mode, normalized):
         heartbeat.set_phase("retrying")
         retry_prompt = prompt + "\n\n--- Retry instruction ---\n" + RETRY_INSTRUCTION
-        raw2, exit_code2, err2 = _run_codex_once(mode, retry_prompt, cwd, timeout, heartbeat)
+        raw2, exit_code2, err2 = _run_codex_once(
+            mode, retry_prompt, cwd, timeout, heartbeat, effort_override=effort_override,
+        )
         retry_count = 1
         if err2 is None:
             normalized2 = normalize(raw2, mode=mode)
@@ -699,7 +712,37 @@ def _parse_cli(argv: Optional[List[str]]) -> argparse.Namespace:
                         help="Path to a pre-built review packet (used by plan-review).")
     parser.add_argument("--transcript-file", default=None)
     parser.add_argument("--transcript-jsonl-path", default=None)
+    parser.add_argument(
+        "--reasoning-effort",
+        default=None,
+        help=(
+            "Override the per-mode reasoning effort. Accepted values: "
+            "low, medium, high, xhigh. Invalid values are ignored with a "
+            "warning to stderr (the per-mode default is used instead). "
+            "Should be set ONLY when the user explicitly asked for it."
+        ),
+    )
     return parser.parse_args(argv)
+
+
+def _resolve_effort_override(raw_value: Optional[str]) -> Optional[str]:
+    """Validate the user-provided effort. Returns None if not set or invalid.
+
+    Invalid values emit a warning to stderr and fall back to the per-mode
+    default (preserving the wrapper's "never raise" contract).
+    """
+    if raw_value is None:
+        return None
+    candidate = str(raw_value).strip().lower()
+    if candidate in VALID_REASONING_EFFORTS:
+        return candidate
+    print(
+        f"[codex-wrapper] WARN: ignoring invalid --reasoning-effort "
+        f"{raw_value!r}; valid values: {', '.join(VALID_REASONING_EFFORTS)}",
+        file=sys.stderr,
+        flush=True,
+    )
+    return None
 
 
 def _maybe_build_review_packet(args: argparse.Namespace) -> Optional[str]:
@@ -787,8 +830,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         transcript_jsonl_path = args.transcript_jsonl_path or ""
         prompt = _build_prompt(args.mode, context_text, user_payload, transcript_text, transcript_jsonl_path)
         timeout = _resolve_timeout(args.mode)
+        effort_override = _resolve_effort_override(getattr(args, "reasoning_effort", None))
         heartbeat.set_phase("invoking-codex")
-        result, retry_count, exit_code = _invoke_codex(args.mode, prompt, cwd, timeout, heartbeat)
+        result, retry_count, exit_code = _invoke_codex(
+            args.mode, prompt, cwd, timeout, heartbeat,
+            effort_override=effort_override,
+        )
     except Exception as exc:  # wrapper must never raise
         error_class = exc.__class__.__name__
         result = _generic_error(args.mode, started_at, f"Wrapper internal error: {error_class}")

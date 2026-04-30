@@ -310,7 +310,10 @@ summary em citação, perguntar se tenta de novo.
 - Apresentar TODOS os findings traduzidos para pt-BR antes de qualquer
   análise própria (regra global "Codex Review Transparency"). Não omita,
   resuma ou agrupe.
-- Reasoning é controlado pelo wrapper conforme o modo. Não sobrescrever
-  via `-c model_reasoning_effort`.
+- Reasoning padrão é controlado pelo wrapper conforme o modo. Sobrescrita
+  só via `--reasoning-effort {low|medium|high|xhigh}` explícito do
+  wrapper, **e somente quando o usuário pediu explicitamente** (ex.:
+  "revisa em effort máximo", "roda em low pra ser rápido"). Não usar
+  `-c model_reasoning_effort=...` direto na CLI do Codex.
 - Apresentação SEMPRE em markdown renderizado, NUNCA dentro de code fence
   — exceto o output de `git status --short` no modo `delegate`.
