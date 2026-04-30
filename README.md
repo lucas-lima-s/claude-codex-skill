@@ -44,7 +44,9 @@ The skill is portable: paths come from environment variables
 - Claude Code (the skill is designed to be invoked by Claude, but the
   scripts under `scripts/` can be used standalone).
 
-See [`SETUP.md`](SETUP.md) for details.
+See [`SETUP.md`](SETUP.md) for details, and
+[`CONTRIBUTING.md`](CONTRIBUTING.md) for development setup and the test
+suite.
 
 ## Usage
 
