@@ -1,7 +1,7 @@
 ---
 name: codex
 description: Delegar ao Codex uma das cinco operações — revisar um plano (plan-review), verificar uma implementação por git diff (verify), responder pergunta/opinião (ask), fazer retrospectiva holística da sessão (insight) ou executar uma tarefa (delegate). Use SEMPRE que o usuário disser qualquer uma destas frases (ou equivalentes naturais em pt-BR "revise esse plano com o codex", "revisa esse plano pelo codex", "pede pro codex revisar isso", "implemente esse plano com o codex", "manda o codex fazer", "delega ao codex", "pergunte ao codex o que ele acha", "pergunta pro codex sobre", "manda isso pro codex", "segunda opinião do codex", "verifica minha implementação com o codex", "pede pro codex olhar o que eu fiz", "faz um insight da sessão", "analisa o que a gente fez", "retrospectiva pelo codex", "o que a gente poderia ter feito"). A skill é o ÚNICO ponto de entrada para invocar o Codex automaticamente — não use o plugin /codex:*. Para o modo `delegate`, SEMPRE confirmar com o usuário antes de rodar porque o Codex roda com `--sandbox danger-full-access` e pode editar/deletar arquivos dentro ou fora do workspace.
-argument-hint: plan-review|verify|ask|insight|delegate|batch-ask|batch-delegate|bg-start|bg-status|bg-output|bg-cancel|bg-list [args]
+argument-hint: plan-review|plan-review-iter|verify|ask|insight|delegate|batch-ask|batch-delegate|bg-start|bg-status|bg-output|bg-cancel|bg-list [args]
 allowed-tools:
   - Read
   - Write
@@ -14,6 +14,8 @@ allowed-tools:
   - Bash(*scripts/build_review_packet.py*)
   - Bash(*scripts/codex_batch.py*)
   - Bash(*scripts/codex_bg.py*)
+  - Bash(*scripts/analyze_plan_complexity.py*)
+  - Bash(*scripts/codex_dialogue.py*)
 ---
 
 # Codex — entry point único
@@ -38,6 +40,7 @@ usuário, não caminho de automação.
 | Frase do usuário (pt-BR) | Modo |
 |---|---|
 | "revise esse plano com o codex" / "revisa pelo codex" / "pede pro codex revisar" | `plan-review` |
+| "revisa iterativamente com o codex" / "abre uma discussão com o codex sobre esse plano" / "vai e volta com o codex até convergir" / "rodada multi-jogada com o codex" | `plan-review-iter` |
 | "pergunte ao codex o que ele acha" / "pergunta pro codex" / "segunda opinião do codex" | `ask` |
 | "verifica minha implementação com o codex" / "pede pro codex olhar o que eu fiz" | `verify` |
 | "implemente esse plano com o codex" / "manda o codex fazer" / "delega ao codex" | `delegate` |
@@ -81,6 +84,15 @@ Política por modo:
 2. Se o usuário colou texto, gravar em `$env:TEMP/codex_plan_<timestamp>.md`.
 3. Caso contrário, perguntar.
 
+**Passo obrigatório antes de invocar o wrapper:** rodar
+`scripts/analyze_plan_complexity.py --plan-file <path>`. Se a saída tiver
+`suggest_iterative=true`, **exibir uma única linha de sugestão** ao
+usuário (formato: `"Esse plano [N] arquivos em [paths], [M] fases — quer
+rodar plan-review-iter (até 3 turnos) em vez do review one-shot?"`) e
+perguntar antes de seguir. Se o usuário aceitar, ir para o modo
+`plan-review-iter`. Se recusar (ou silêncio), invocar `plan-review`
+normalmente. **Não sugerir 2x no mesmo plano/turno.**
+
 **Packet:** o wrapper monta o review packet automaticamente quando recebe
 `--last-message-file` (resolve arquivos citados, aplica janela ±50, manifest,
 truncamento em 120 KB). Para forçar um packet customizado, gere antes via
@@ -95,6 +107,64 @@ truncamento em 120 KB). Para forçar um packet customizado, gere antes via
   --last-message-file "<path do plano>" \
   --transcript-file "<dump dos últimos 10 turnos>"
 ```
+
+## Modo 1b — `plan-review-iter` *(revisão iterativa multi-jogada)*
+
+**Quando:** usuário pediu explicitamente OU aceitou a auto-sugestão do
+passo de complexidade. Para planos grandes, sensíveis ou que envolvem
+múltiplos arquivos/fases, vale ir e voltar com o Codex.
+
+**Mecânica:** Claude e Codex iteram até 3 turnos por default
+(configurável via `--max-turns N` ou `CODEX_DIALOGUE_MAX_TURNS`,
+range 1-20). A cada turno: Codex revê o plano, Claude apresenta findings
+1-a-1 traduzidos, abre `AskUserQuestion` para aprovar/rejeitar cada
+finding, revisa o plano e dispara o próximo turno.
+
+**Critérios de parada (automáticos):**
+- **Convergência**: 2 turnos consecutivos com `findings=[]` E
+  `severity=low` E `block_recommended=false`.
+- **Limite**: `current_turn >= max_turns`.
+- **Divergência**: mesmo finding `high` (match por `title + location`)
+  em 2 turnos consecutivos → escala ao usuário ("Codex e eu discordamos
+  no ponto X").
+- **Abort manual**: usuário disse "para aqui" / "chega" / "encerra a
+  discussão" → Claude chama `codex_dialogue.py abort`.
+
+**Regra inviolável de transparência por turno:** mesmo no fluxo
+iterativo, todos os findings do turno atual são apresentados em pt-BR
+1-a-1 com tabela meta + lista numerada **antes** de qualquer
+`AskUserQuestion`. Severity alta muda o teor da pergunta final
+(recomenda abortar) — **nunca** muda a ordem de divulgação dos findings.
+
+**Execução:**
+
+```bash
+# Turno 1
+"$SKILLS_PYTHON" "$USERPROFILE/.claude/skills/codex/scripts/codex_dialogue.py" start \
+  --plan-file "<path>" \
+  --cwd "<cwd>" \
+  [--max-turns N]
+# {"status": "ok", "dialogue_id": "abc...", "turn": 1, "findings_payload": {...}}
+
+# Turnos seguintes (Claude grava plano revisado em novo arquivo)
+"$SKILLS_PYTHON" "$USERPROFILE/.claude/skills/codex/scripts/codex_dialogue.py" next-turn \
+  --dialogue-id "abc..." \
+  --plan-file "<path do plano revisado>"
+
+# Encerrar (gera dialogue_log.md + final_plan.md)
+"$SKILLS_PYTHON" "$USERPROFILE/.claude/skills/codex/scripts/codex_dialogue.py" finish \
+  --dialogue-id "abc..."
+
+# Abortar a qualquer turno
+"$SKILLS_PYTHON" "$USERPROFILE/.claude/skills/codex/scripts/codex_dialogue.py" abort \
+  --dialogue-id "abc..."
+```
+
+**Apresentação final** (após `finish`): exibir o `dialogue_log.md`
+consolidado — contém delta turn 1 → turn N (seções adicionadas/removidas/
+modificadas), tabela `turno | severity | findings | block | summary`,
+findings pendentes do último turno e plano final. **Não** dump verbatim
+de cada turno.
 
 ## Modo 2 — `verify` *(revisar uma implementação)*
 
@@ -348,6 +418,10 @@ summary em citação, perguntar se tenta de novo.
 - **Nunca** chamar `codex` CLI direto.
 - **Nunca** invocar `/codex:*` (plugin oficial) a partir desta skill.
 - **Nunca** aplicar findings como edit automático — só apresentar.
+- **Antes de qualquer `plan-review`**, rodar
+  `scripts/analyze_plan_complexity.py`. Se a saída sugerir iterativo,
+  exibir a sugestão de uma linha e perguntar. Não pular esse passo. Não
+  sugerir 2x no mesmo plano/turno.
 - **Temporários** (payload.json, task.txt, packet, transcripts) **só** em
   `$env:TEMP`; zero writes dentro do repo-alvo.
 - Em `delegate`, confirmação explícita do usuário com os 5 campos é

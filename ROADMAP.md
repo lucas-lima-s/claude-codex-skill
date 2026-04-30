@@ -19,40 +19,27 @@ em background sem o protocolo de 5 campos do `delegate` síncrono. Risco
 aceito conscientemente pelo autor; revisitar quando houver fluxo seguro
 de confirmação assíncrona.
 
-## 2. Conversa multi-jogada Claude ↔ Codex (até 5 turnos)
+## 2. Conversa multi-jogada Claude ↔ Codex — **IMPLEMENTADO (Phase 2)**
 
-Discussão iterativa em vez de revisão one-shot:
+Implementado em `scripts/codex_dialogue.py` (start | next-turn | status |
+finish | abort) + `scripts/analyze_plan_complexity.py` (heurística de
+auto-sugestão). Default 3 turnos, configurável via `--max-turns N` ou
+`CODEX_DIALOGUE_MAX_TURNS` (range 1-20). Estado em
+`$TEMP/codex_dialogue_<id>/`. Critérios de parada: convergência (2 turnos
+limpos consecutivos), limite de turnos, divergência (mesmo finding `high`
+em 2 turnos), abort manual. `finish` consolida `final_plan.md` +
+`dialogue_log.md`.
 
-- Turno 1: Claude envia plano → Codex revisa, devolve findings.
-- Turno 2: Claude atualiza o plano em resposta aos findings → Codex
-  revisa de novo.
-- Repete até `max_turns` (default 5) ou até Codex devolver
-  `findings=[]` + `severity=low` por dois turnos consecutivos.
+A auto-sugestão é gatilhada antes de qualquer `plan-review`: o Claude
+roda `analyze_plan_complexity.py`; se score >= 3 (sinais: tamanho >4KB,
+>5 arquivos mencionados, >2 fases, keywords sensíveis, cross-module),
+exibe uma única linha de sugestão e pergunta antes de seguir. Ver
+`SKILL.md` (modos `plan-review` e `plan-review-iter`).
 
-Mecânica:
-
-- Estado da conversa em `$env:TEMP/codex_dialogue_<id>/turn_<n>.json`
-  com plano + findings + decisão de Claude por turno.
-- Cada chamada subsequente ao Codex inclui:
-  - plano atualizado;
-  - histórico das jogadas anteriores (resumo curto: turno N → findings
-    aceitos/rejeitados/o que mudou);
-  - foco explícito ("revise apenas as mudanças desde o turno N-1").
-- Ferramenta de saída humana: o usuário pode interromper a qualquer turno
-  com "para aqui" e Claude apresenta o plano final.
-- Critério natural de parada: convergência (Codex sem findings novos),
-  divergência (Claude e Codex discordam fundamentalmente — escala ao
-  usuário), ou limite de turnos.
-- Output final: plano consolidado + log enxuto da conversa (não mostra
-  cada turno verbatim, mostra o diff entre turnos).
-
-Critério para iniciar:
-
-- `plan-review` simples já está em uso real e estabilizado.
-- Telemetria mostra casos onde o usuário pediu re-revisão manualmente
-  após ajustar o plano (sinal de demanda).
-- Definir como apresentar a conversa final ao usuário sem virar parede de
-  texto — o valor está no plano consolidado, não no histórico.
+Regra de transparência por turno mantida: cada turno apresenta findings
+1-a-1 traduzidos, abre `AskUserQuestion` para aprovar/rejeitar cada um,
+só então gera plano revisado. Severity alta muda o teor da pergunta
+final, nunca a ordem de divulgação.
 
 ## 3. Profissionalização do repo público
 

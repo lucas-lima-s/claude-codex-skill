@@ -658,6 +658,189 @@ def test_disable_heartbeat_silent(r: Runner) -> None:
                 "heartbeat suppressed when env=1")
 
 
+def test_analyze_plan_complexity(r: Runner) -> None:
+    r.section("analyze_plan_complexity × heurística de auto-sugestão")
+    helper = SCRIPTS / "analyze_plan_complexity.py"
+    if not helper.exists():
+        r.fail("analyze_plan_complexity.py present", "missing")
+        return
+
+    with _tempdir() as tmp:
+        # Caso 1: plano simples (1 linha, sem keywords) → score 0
+        simple = tmp / "simple.md"
+        simple.write_text("# Plano\n\nMexer em scripts/foo.py para algo.\n", encoding="utf-8")
+        proc = subprocess.run(
+            [PYTHON, str(helper), "--plan-file", str(simple)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
+        )
+        try:
+            data = json.loads(proc.stdout)
+        except json.JSONDecodeError:
+            data = {}
+        r.eq(data.get("suggest_iterative"), False, "plano simples → suggest_iterative=false")
+        r.le(data.get("score") or 0, 1, "plano simples → score baixo")
+
+        # Caso 2: plano sensível (cross-module + keywords + 3 fases + grande)
+        sensitive_lines = ["# Plano sensível", ""]
+        sensitive_lines.append("Refactor de auth, payment e migration. Toca `handler/`, `service/`, `repo/` e `api/`.")
+        for n in range(1, 4):
+            sensitive_lines.append(f"## Phase {n}")
+            for f_idx in range(8):
+                sensitive_lines.append(f"- Mexer em scripts/file{f_idx}_{n}.py")
+            sensitive_lines.append("Detalhes: " + "X" * 800)
+        sensitive_text = "\n".join(sensitive_lines)
+        sensitive = tmp / "sensitive.md"
+        sensitive.write_text(sensitive_text, encoding="utf-8")
+        proc = subprocess.run(
+            [PYTHON, str(helper), "--plan-file", str(sensitive)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
+        )
+        try:
+            data = json.loads(proc.stdout)
+        except json.JSONDecodeError:
+            data = {}
+        r.eq(data.get("suggest_iterative"), True,
+             "plano sensível → suggest_iterative=true")
+        r.truthy((data.get("score") or 0) >= 3, "plano sensível → score >= 3")
+        reasons = data.get("reasons") or []
+        r.truthy(any("keywords" in (rs or "") for rs in reasons),
+                 "razões mencionam keywords sensíveis")
+
+        # Caso 3: arquivo missing → falha gracefully
+        missing = tmp / "does_not_exist.md"
+        proc = subprocess.run(
+            [PYTHON, str(helper), "--plan-file", str(missing)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
+        )
+        try:
+            data = json.loads(proc.stdout)
+        except json.JSONDecodeError:
+            data = {}
+        r.eq(data.get("suggest_iterative"), False,
+             "arquivo missing → suggest_iterative=false (graceful)")
+        r.eq(data.get("score") or 0, 0, "arquivo missing → score 0")
+
+
+def test_dialogue_lifecycle(r: Runner) -> None:
+    r.section("codex_dialogue × ciclo start → next-turn → finish/abort")
+    dialogue = SCRIPTS / "codex_dialogue.py"
+    if not dialogue.exists():
+        r.fail("codex_dialogue.py present", "missing")
+        return
+
+    env = _base_env(behavior="success", timeout="30")
+    with _tempdir() as tmp:
+        plan = tmp / "plan_v1.md"
+        plan.write_text("# Plano v1\nMexer em foo.py.\n", encoding="utf-8")
+
+        # start
+        proc = subprocess.run(
+            [PYTHON, str(dialogue), "start", "--plan-file", str(plan), "--cwd", str(SKILL_DIR), "--max-turns", "2"],
+            env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
+        )
+        try:
+            data = json.loads(proc.stdout)
+        except json.JSONDecodeError:
+            data = {}
+        r.eq(data.get("status"), "ok", "dialogue start status=ok")
+        r.eq(data.get("turn"), 1, "dialogue start turn=1")
+        dialogue_id = data.get("dialogue_id")
+        r.truthy(dialogue_id, "dialogue start emits dialogue_id")
+        r.eq(data.get("max_turns"), 2, "max_turns honored from CLI flag")
+
+        if not dialogue_id:
+            return
+
+        # status mid-flight
+        proc = subprocess.run(
+            [PYTHON, str(dialogue), "status", "--dialogue-id", dialogue_id],
+            env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
+        )
+        try:
+            data = json.loads(proc.stdout)
+        except json.JSONDecodeError:
+            data = {}
+        r.eq(data.get("dialogue_status"), "running", "status: dialogue running")
+        r.eq(data.get("current_turn"), 1, "status: current_turn=1")
+
+        # next-turn (turn 2 = limit)
+        plan_v2 = tmp / "plan_v2.md"
+        plan_v2.write_text("# Plano v2\nVersão revisada.\n", encoding="utf-8")
+        proc = subprocess.run(
+            [PYTHON, str(dialogue), "next-turn", "--dialogue-id", dialogue_id, "--plan-file", str(plan_v2)],
+            env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
+        )
+        try:
+            data = json.loads(proc.stdout)
+        except json.JSONDecodeError:
+            data = {}
+        r.eq(data.get("turn"), 2, "next-turn returns turn=2")
+        r.eq(data.get("stop_reason"), "limit",
+             "stop_reason=limit when current_turn == max_turns")
+
+        # finish
+        proc = subprocess.run(
+            [PYTHON, str(dialogue), "finish", "--dialogue-id", dialogue_id],
+            env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
+        )
+        try:
+            data = json.loads(proc.stdout)
+        except json.JSONDecodeError:
+            data = {}
+        r.eq(data.get("status"), "ok", "finish returns status=ok")
+        r.truthy(data.get("dialogue_log_path"), "finish emits dialogue_log_path")
+        r.truthy(data.get("final_plan_path"), "finish emits final_plan_path")
+        log_path = data.get("dialogue_log_path") or ""
+        if log_path:
+            r.truthy(Path(log_path).exists(), "dialogue_log.md was written")
+
+        # abort on a fresh dialogue (no next-turn)
+        plan2 = tmp / "abort_plan.md"
+        plan2.write_text("# Plano para abortar\n", encoding="utf-8")
+        proc = subprocess.run(
+            [PYTHON, str(dialogue), "start", "--plan-file", str(plan2), "--cwd", str(SKILL_DIR), "--max-turns", "5"],
+            env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
+        )
+        try:
+            data = json.loads(proc.stdout)
+        except json.JSONDecodeError:
+            data = {}
+        abort_id = data.get("dialogue_id")
+        if abort_id:
+            proc = subprocess.run(
+                [PYTHON, str(dialogue), "abort", "--dialogue-id", abort_id],
+                env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
+            )
+            try:
+                data = json.loads(proc.stdout)
+            except json.JSONDecodeError:
+                data = {}
+            r.eq(data.get("dialogue_status"), "aborted", "abort sets status=aborted")
+
+            # stop_signal should reflect aborted
+            proc = subprocess.run(
+                [PYTHON, str(dialogue), "status", "--dialogue-id", abort_id],
+                env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
+            )
+            try:
+                data = json.loads(proc.stdout)
+            except json.JSONDecodeError:
+                data = {}
+            r.eq(data.get("stop_reason"), "aborted", "status reports stop_reason=aborted")
+
+        # not_found error path
+        proc = subprocess.run(
+            [PYTHON, str(dialogue), "status", "--dialogue-id", "deadbeefcafe"],
+            env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
+        )
+        try:
+            data = json.loads(proc.stdout)
+        except json.JSONDecodeError:
+            data = {}
+        r.eq(data.get("status"), "error", "unknown dialogue_id → status=error")
+        r.eq(data.get("reason"), "dialogue_not_found", "reason=dialogue_not_found")
+
+
 def test_reasoning_effort_override(r: Runner) -> None:
     r.section("--reasoning-effort sobrescreve default por modo")
     with _tempdir() as tmp:
@@ -763,6 +946,8 @@ def main() -> int:
     test_ps1_stub(r)
     test_disable_heartbeat_silent(r)
     test_reasoning_effort_override(r)
+    test_analyze_plan_complexity(r)
+    test_dialogue_lifecycle(r)
 
     duration = time.monotonic() - started
     print()
