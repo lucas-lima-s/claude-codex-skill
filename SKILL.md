@@ -1,6 +1,6 @@
 ---
 name: codex
-description: Delegar ao Codex uma das cinco operações — revisar um plano (plan-review), verificar uma implementação por git diff (verify), responder pergunta/opinião (ask), fazer retrospectiva holística da sessão (insight) ou executar uma tarefa (delegate). Use SEMPRE que o usuário disser qualquer uma destas frases (ou equivalentes naturais em pt-BR "revise esse plano com o codex", "revisa esse plano pelo codex", "pede pro codex revisar isso", "implemente esse plano com o codex", "manda o codex fazer", "delega ao codex", "pergunte ao codex o que ele acha", "pergunta pro codex sobre", "manda isso pro codex", "segunda opinião do codex", "verifica minha implementação com o codex", "pede pro codex olhar o que eu fiz", "faz um insight da sessão", "analisa o que a gente fez", "retrospectiva pelo codex", "o que a gente poderia ter feito"). A skill é o ÚNICO ponto de entrada para invocar o Codex automaticamente — não use o plugin /codex:*. Para o modo `delegate`, SEMPRE confirmar com o usuário antes de rodar porque o Codex roda com `--sandbox danger-full-access` e pode editar/deletar arquivos dentro ou fora do workspace.
+description: Delegate one of five operations to Codex — review a plan (plan-review), verify an implementation via git diff (verify), answer a question/opinion (ask), produce a holistic session retrospective (insight), or execute a task (delegate). Use this skill ALWAYS when the user says any of these phrases (English: "review this plan with codex", "have codex review", "ask codex what it thinks", "second opinion from codex", "verify my implementation with codex", "have codex look at what I did", "delegate to codex", "send it to codex", "do a session insight", "retrospective with codex"; or pt-BR equivalents like "revise esse plano com o codex", "pergunte ao codex o que ele acha", "verifica minha implementação com o codex", "manda o codex fazer", "delega ao codex", "faz um insight da sessão"). This skill is the ONLY entry point to invoke Codex automatically — do not use the /codex:* plugin. For `delegate` mode, ALWAYS confirm with the user before running because Codex runs with `--sandbox danger-full-access` and can edit/delete files inside or outside the workspace.
 argument-hint: plan-review|plan-review-iter|verify|ask|insight|delegate|batch-ask|batch-delegate|bg-start|bg-status|bg-output|bg-cancel|bg-list [args]
 allowed-tools:
   - Read
@@ -38,18 +38,19 @@ manually):
 | `insight` | `xhigh` | `read-only` | 420s |
 | `delegate` | `xhigh` | `danger-full-access` | 300s |
 
-**Natural-phrase → mode mapping** (trigger phrases stay in pt-BR for
-matching against Brazilian Portuguese speech):
+**Natural-phrase → mode mapping** (Claude matches either language
+naturally; English is listed first as the documentation default,
+Portuguese phrases follow as user-spoken equivalents):
 
-| Trigger phrase (pt-BR) | Mode |
+| Trigger phrase (English / pt-BR) | Mode |
 |---|---|
-| "revise esse plano com o codex" / "revisa pelo codex" / "pede pro codex revisar" | `plan-review` |
-| "revisa iterativamente com o codex" / "abre uma discussão com o codex sobre esse plano" / "vai e volta com o codex até convergir" / "rodada multi-jogada com o codex" | `plan-review-iter` |
-| "pergunte ao codex o que ele acha" / "pergunta pro codex" / "segunda opinião do codex" | `ask` |
-| "verifica minha implementação com o codex" / "pede pro codex olhar o que eu fiz" | `verify` |
-| "implemente esse plano com o codex" / "manda o codex fazer" / "delega ao codex" | `delegate` |
-| "faz um insight da sessão" / "analisa o que a gente fez" / "retrospectiva pelo codex" | `insight` |
-| "manda isso pro codex" (ambiguous) | ask which mode |
+| "review this plan with codex" / "have codex review" / "ask codex to review" / "revise esse plano com o codex" / "revisa pelo codex" / "pede pro codex revisar" | `plan-review` |
+| "iteratively review with codex" / "open a discussion with codex" / "go back and forth with codex until convergence" / "multi-turn round with codex" / "revisa iterativamente com o codex" / "abre uma discussão com o codex sobre esse plano" / "vai e volta com o codex até convergir" / "rodada multi-jogada com o codex" | `plan-review-iter` |
+| "ask codex what it thinks" / "ask codex" / "second opinion from codex" / "pergunte ao codex o que ele acha" / "pergunta pro codex" / "segunda opinião do codex" | `ask` |
+| "verify my implementation with codex" / "have codex look at what I did" / "verifica minha implementação com o codex" / "pede pro codex olhar o que eu fiz" | `verify` |
+| "implement this plan with codex" / "send it to codex" / "delegate to codex" / "implemente esse plano com o codex" / "manda o codex fazer" / "delega ao codex" | `delegate` |
+| "do a session insight" / "analyse what we did" / "retrospective with codex" / "faz um insight da sessão" / "analisa o que a gente fez" / "retrospectiva pelo codex" | `insight` |
+| "send this to codex" / "manda isso pro codex" (ambiguous) | ask which mode |
 
 ## Session transcript (conversational context)
 
@@ -234,7 +235,7 @@ bug hunt.
 
 ## Mode 5 — `delegate` *(Codex executes a task)*
 
-**When:** the user explicitly says "send the codex" / "delegate to codex".
+**When:** the user explicitly says "send it to codex" / "delegate to codex".
 
 **Do not use** if the task is ambiguous (ask for `plan-review` first) or
 if the user wants Claude to do it.
@@ -373,10 +374,12 @@ numbered list of translated findings).
 
 ## Locale switch (Claude-side, via `set_locale.py`)
 
-Trigger phrases (pt-BR, kept as-is for natural-language matching):
-"configurar idioma do codex", "trocar idioma do codex", "muda o codex
-pra inglês", "codex em inglês", "codex em pt-br", "trocar locale do
-codex".
+Trigger phrases (English first, pt-BR equivalents follow): "configure
+codex language", "switch codex language", "switch codex to English",
+"switch codex to pt-BR", "codex in English", "codex in pt-br", "switch
+codex locale", "configurar idioma do codex", "trocar idioma do codex",
+"muda o codex pra inglês", "codex em inglês", "codex em pt-br",
+"trocar locale do codex".
 
 Action:
 
