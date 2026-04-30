@@ -102,12 +102,14 @@ such as:
 
 ## Status and roadmap
 
-The skill is in real use. Open items (not yet implemented) are listed in
+The skill is in real use. Open work is listed in
 [`ROADMAP.md`](ROADMAP.md):
 
-- Named background agents (non-blocking execution).
-- Multi-turn Claude ↔ Codex dialogue (up to 5 turns).
-- Review caching by fingerprint, repro mode, `--json` stream parser.
+- Public-repo polish (CI, CHANGELOG, CONTRIBUTING, GitHub templates,
+  topics, `.gitattributes`).
+- Robust `codex exec --json` stream parser.
+- Review caching by packet fingerprint.
+- `repro` mode for replaying a `run_id`'s prompt + output.
 
 ## License
 

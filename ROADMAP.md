@@ -3,44 +3,7 @@
 Items recorded as future evolution. Do not implement until the start
 criterion is clear.
 
-## 1. Background agents (non-blocking) — **IMPLEMENTED (Phase 1)**
-
-Implemented in `scripts/codex_bg.py` with 5 subcommands
-(`start | status | output | cancel | list`). State persisted in
-`cache/bg_runs/<run_id>/` (meta.json + output.json + stderr.log +
-cancelled.flag). Default limit of 5 concurrent runs, configurable via
-`--max-concurrent` or `CODEX_BG_MAX_CONCURRENT`. Automatic cleanup of
-terminated runs older than 7 days (mtime). Heartbeat redirected to the
-run's own `stderr.log` (nothing flows to the Claude session's stderr).
-See `SKILL.md` (section "Background modes").
-
-Known caveat: `bg-start delegate` still allows launching `delegate` in
-the background without the synchronous `delegate`'s 5-field protocol.
-Risk consciously accepted by the author; revisit when there is a safe
-asynchronous confirmation flow.
-
-## 2. Multi-turn Claude ↔ Codex dialogue — **IMPLEMENTED (Phase 2)**
-
-Implemented in `scripts/codex_dialogue.py` (start | next-turn | status |
-finish | abort) + `scripts/analyze_plan_complexity.py` (auto-suggestion
-heuristic). Default 3 turns, configurable via `--max-turns N` or
-`CODEX_DIALOGUE_MAX_TURNS` (range 1-20). State in
-`$TEMP/codex_dialogue_<id>/`. Stop criteria: convergence (2 consecutive
-clean turns), turn limit, divergence (same `high` finding in 2 turns),
-manual abort. `finish` consolidates `final_plan.md` + `dialogue_log.md`.
-
-The auto-suggestion is triggered before any `plan-review`: Claude runs
-`analyze_plan_complexity.py`; if the score is ≥ 3 (signals: size >4KB,
->5 mentioned files, >2 phases, sensitive keywords, cross-module), it
-shows a single suggestion line and asks before proceeding. See
-`SKILL.md` (modes `plan-review` and `plan-review-iter`).
-
-Per-turn transparency rule kept: every turn presents findings 1-by-1
-translated, opens `AskUserQuestion` to approve/reject each, and only
-then produces the revised plan. High severity changes the tone of the
-final question, never the order in which findings are disclosed.
-
-## 3. Public-repo polish
+## Public-repo polish
 
 The repo is public at
 https://github.com/lucas-lima-s/claude-codex-skill, but only with the
@@ -112,12 +75,19 @@ another user without having to ask anything".
 - Accept external contributions via PR or keep the repo "read-only for
   the public, write-only for the author"?
 
-## 4. (Open) Other items
+## Other open work
 
-- `codex exec --json` event streaming with a robust parser (today the
-  flag is opt-in but the output is treated as raw — would benefit
-  heartbeat and partial parsing).
-- Review caching by packet fingerprint — avoids re-reviewing an
-  identical plan already seen.
-- `repro` mode that, given a `run_id`, replays prompt + output into a
-  human-readable folder for debugging.
+- **Robust `codex exec --json` event-stream parser.** The opt-in flag
+  `CODEX_WRAPPER_USE_JSON_STREAM=1` already appends `--json` to the
+  Codex command (see `scripts/invoke_codex_with_claude.py`), but the
+  output is still consumed as a raw blob. A real streaming parser
+  would benefit the heartbeat (richer phase signals) and enable
+  partial-result rescue if the Codex run is killed mid-flight.
+- **Review caching by packet fingerprint.** The canonical JSON output
+  already exposes a `fingerprint` field, but there is no cache that
+  uses it to short-circuit a re-review of an identical plan/diff
+  already seen. Useful for `plan-review-iter` when the user re-runs
+  the same plan tweak twice.
+- **`repro` mode.** Given a `run_id`, replay the exact prompt + Codex
+  output into a human-readable folder for debugging — useful when
+  triaging an unexpected finding or a wrapper bug after the fact.

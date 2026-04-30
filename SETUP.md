@@ -133,15 +133,14 @@ See `SKILL.md` for details. Summary:
 - `batch-delegate` — Multiple parallel executions with declared
   write-set.
 
-## Roadmap (not yet implemented)
+## Roadmap
 
-See `ROADMAP.md` at the skill root. Open items:
+See `ROADMAP.md` at the skill root. Open work:
 
-- Review caching by fingerprint, repro mode, `--json` stream parser.
-
-Already implemented: background agents (`scripts/codex_bg.py`),
-multi-turn dialogue (`scripts/codex_dialogue.py` +
-`analyze_plan_complexity.py`), configurable `--reasoning-effort`.
+- Public-repo polish (CI, CHANGELOG, CONTRIBUTING, GitHub templates,
+  `.gitattributes`).
+- Robust `codex exec --json` stream parser, review caching by
+  fingerprint, `repro` mode.
 
 ## Notes for other users
 
