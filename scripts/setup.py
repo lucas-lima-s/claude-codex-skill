@@ -12,6 +12,7 @@ wizard is auto-triggered before a wrapper invocation.
 Usage:
     python scripts/setup.py
 """
+
 from __future__ import annotations
 
 import json
@@ -112,7 +113,9 @@ def _validate_codex_cli() -> None:
     try:
         proc = subprocess.run(
             [codex_path, "--version"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
     except (subprocess.TimeoutExpired, OSError):
         say(codex_config.t("setup.validation.codex_missing"))
@@ -128,17 +131,21 @@ def _validate_python() -> None:
         executable = skills_python
     else:
         executable = sys.executable
-        say(codex_config.t(
-            "setup.validation.python_warn_skills_python",
-            executable=executable,
-        ))
+        say(
+            codex_config.t(
+                "setup.validation.python_warn_skills_python",
+                executable=executable,
+            )
+        )
         return
     version = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
-    say(codex_config.t(
-        "setup.validation.python_ok",
-        executable=executable,
-        version=version,
-    ))
+    say(
+        codex_config.t(
+            "setup.validation.python_ok",
+            executable=executable,
+            version=version,
+        )
+    )
 
 
 def _credentials_sources() -> list[Path]:
@@ -186,18 +193,22 @@ def _validate_credentials() -> None:
     if not keys:
         say(codex_config.t("setup.validation.credentials_none"))
     else:
-        say(codex_config.t(
-            "setup.validation.credentials_header",
-            list=", ".join(keys),
-        ))
+        say(
+            codex_config.t(
+                "setup.validation.credentials_header",
+                list=", ".join(keys),
+            )
+        )
         sources = _credentials_sources()
         present = _keys_present(sources, keys)
         for key in keys:
             if not present.get(key):
-                say(codex_config.t(
-                    "setup.validation.credentials_missing_warn",
-                    key=key,
-                ))
+                say(
+                    codex_config.t(
+                        "setup.validation.credentials_missing_warn",
+                        key=key,
+                    )
+                )
     say(codex_config.t("setup.validation.credentials_hint"))
 
 

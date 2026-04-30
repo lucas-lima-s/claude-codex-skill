@@ -10,6 +10,7 @@ Run::
 
 Exit code is the number of failed assertions.
 """
+
 from __future__ import annotations
 
 import json
@@ -50,6 +51,7 @@ PYTHON = _resolve_python()
 
 
 # ----------------------------------------------------------------------- runner
+
 
 class Runner:
     def __init__(self) -> None:
@@ -106,8 +108,8 @@ class Runner:
 
 # ----------------------------------------------------------------------- helpers
 
-def _bg_env(behavior: str = "success",
-            extra: dict[str, str] | None = None) -> dict[str, str]:
+
+def _bg_env(behavior: str = "success", extra: dict[str, str] | None = None) -> dict[str, str]:
     """Env passed to the codex_bg subprocess; the spawned wrapper child
     inherits these (in particular CODEX_WRAPPER_CODEX_OVERRIDE).
 
@@ -125,12 +127,18 @@ def _bg_env(behavior: str = "success",
     return env
 
 
-def _run_bg(args: list[str], env: dict[str, str] | None = None,
-            timeout: float = 30.0) -> tuple[dict[str, Any], str]:
+def _run_bg(
+    args: list[str], env: dict[str, str] | None = None, timeout: float = 30.0
+) -> tuple[dict[str, Any], str]:
     cmd = [PYTHON, str(BG_SCRIPT), *args]
     proc = subprocess.run(
-        cmd, env=env or os.environ.copy(), capture_output=True,
-        text=True, encoding="utf-8", errors="replace", timeout=timeout,
+        cmd,
+        env=env or os.environ.copy(),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=timeout,
     )
     try:
         result = json.loads(proc.stdout or "{}")
@@ -139,9 +147,9 @@ def _run_bg(args: list[str], env: dict[str, str] | None = None,
     return result, proc.stderr
 
 
-def _wait_for_done(run_id: str, env: dict[str, str],
-                   max_wait: float = 30.0,
-                   poll_interval: float = 0.5) -> dict[str, Any]:
+def _wait_for_done(
+    run_id: str, env: dict[str, str], max_wait: float = 30.0, poll_interval: float = 0.5
+) -> dict[str, Any]:
     """Polls bg-status until status != running (or timeout)."""
     deadline = time.monotonic() + max_wait
     last: dict[str, Any] = {}
@@ -174,6 +182,7 @@ def _purge_bg_runs() -> None:
 
 # ----------------------------------------------------------------------- tests
 
+
 def test_start_status_output(r: Runner) -> None:
     r.section("bg start → status → output (happy path)")
     _purge_bg_runs()
@@ -182,9 +191,12 @@ def test_start_status_output(r: Runner) -> None:
         plan.write_text("background test plan\n", encoding="utf-8")
         env = _bg_env(behavior="success")
         start_args = [
-            "start", "plan-review",
-            "--cwd", str(SKILL_DIR),
-            "--last-message-file", str(plan),
+            "start",
+            "plan-review",
+            "--cwd",
+            str(SKILL_DIR),
+            "--last-message-file",
+            str(plan),
         ]
         started_at = time.monotonic()
         result, _ = _run_bg(start_args, env=env)
@@ -198,18 +210,17 @@ def test_start_status_output(r: Runner) -> None:
             return
 
         final_status = _wait_for_done(run_id, env=env, max_wait=20.0)
-        r.eq(final_status.get("status"), "done",
-             "status converges to 'done' after fake codex finishes")
-        r.eq(final_status.get("pid_alive"), False,
-             "pid_alive=false after subprocess exits")
-        r.truthy(final_status.get("finished_at"),
-                 "finished_at is populated on terminal status")
+        r.eq(
+            final_status.get("status"),
+            "done",
+            "status converges to 'done' after fake codex finishes",
+        )
+        r.eq(final_status.get("pid_alive"), False, "pid_alive=false after subprocess exits")
+        r.truthy(final_status.get("finished_at"), "finished_at is populated on terminal status")
 
         out, _ = _run_bg(["output", run_id], env=env)
-        r.eq(out.get("status"), "ok",
-             "output returns wrapper canonical JSON (status=ok)")
-        r.eq(out.get("mode"), "plan-review",
-             "output preserves the wrapper's mode field")
+        r.eq(out.get("status"), "ok", "output returns wrapper canonical JSON (status=ok)")
+        r.eq(out.get("mode"), "plan-review", "output preserves the wrapper's mode field")
         findings = out.get("findings") or []
         r.eq(len(findings), 1, "output preserves the fake's 1 finding")
 
@@ -222,12 +233,9 @@ def test_output_while_running(r: Runner) -> None:
         plan.write_text("delay test\n", encoding="utf-8")
         # delay_long makes the fake sleep 35s — plenty of time to check
         # status while running. Override to 8s to avoid slowing the suite down.
-        env = _bg_env(behavior="delay_long",
-                      extra={"FAKE_CODEX_DELAY_SECONDS": "8"})
+        env = _bg_env(behavior="delay_long", extra={"FAKE_CODEX_DELAY_SECONDS": "8"})
         result, _ = _run_bg(
-            ["start", "plan-review",
-             "--cwd", str(SKILL_DIR),
-             "--last-message-file", str(plan)],
+            ["start", "plan-review", "--cwd", str(SKILL_DIR), "--last-message-file", str(plan)],
             env=env,
         )
         run_id = result.get("run_id")
@@ -243,10 +251,8 @@ def test_output_while_running(r: Runner) -> None:
 
         # output while running: must refuse with still_running
         out, _ = _run_bg(["output", run_id], env=env)
-        r.eq(out.get("status"), "error",
-             "output returns error while still running")
-        r.eq(out.get("reason"), "still_running",
-             "reason=still_running")
+        r.eq(out.get("status"), "error", "output returns error while still running")
+        r.eq(out.get("reason"), "still_running", "reason=still_running")
 
         # wait for completion to clean up
         _wait_for_done(run_id, env=env, max_wait=20.0)
@@ -258,12 +264,9 @@ def test_cancel(r: Runner) -> None:
     with _tempdir() as tmp:
         plan = tmp / "p.md"
         plan.write_text("cancel test\n", encoding="utf-8")
-        env = _bg_env(behavior="delay_long",
-                      extra={"FAKE_CODEX_DELAY_SECONDS": "30"})
+        env = _bg_env(behavior="delay_long", extra={"FAKE_CODEX_DELAY_SECONDS": "30"})
         result, _ = _run_bg(
-            ["start", "plan-review",
-             "--cwd", str(SKILL_DIR),
-             "--last-message-file", str(plan)],
+            ["start", "plan-review", "--cwd", str(SKILL_DIR), "--last-message-file", str(plan)],
             env=env,
         )
         run_id = result.get("run_id")
@@ -275,14 +278,12 @@ def test_cancel(r: Runner) -> None:
         cancel_result, _ = _run_bg(["cancel", run_id], env=env)
         r.eq(cancel_result.get("status"), "ok", "cancel returns status=ok")
         r.eq(cancel_result.get("cancelled"), True, "cancel marks cancelled=true")
-        r.eq(cancel_result.get("was_alive"), True,
-             "cancel reports the run was alive at the time")
+        r.eq(cancel_result.get("was_alive"), True, "cancel reports the run was alive at the time")
 
         # The flag is written and the meta is updated — status must reflect cancelled.
         time.sleep(1.5)
         st, _ = _run_bg(["status", run_id], env=env)
-        r.eq(st.get("status"), "cancelled",
-             "status converges to 'cancelled'")
+        r.eq(st.get("status"), "cancelled", "status converges to 'cancelled'")
 
         # Cancel idempotente
         cancel_again, _ = _run_bg(["cancel", run_id], env=env)
@@ -300,9 +301,7 @@ def test_list_orders_runs(r: Runner) -> None:
         run_ids: list[str] = []
         for i in range(3):
             res, _ = _run_bg(
-                ["start", "plan-review",
-                 "--cwd", str(SKILL_DIR),
-                 "--last-message-file", str(plan)],
+                ["start", "plan-review", "--cwd", str(SKILL_DIR), "--last-message-file", str(plan)],
                 env=env,
             )
             rid = res.get("run_id")
@@ -322,8 +321,7 @@ def test_list_orders_runs(r: Runner) -> None:
         # The top 3 entries in the list must be the freshly created ones,
         # in descending started_at order (most recent first).
         expected_top = list(reversed(run_ids))
-        r.eq(listed_ids, expected_top,
-             "list orders runs by started_at desc")
+        r.eq(listed_ids, expected_top, "list orders runs by started_at desc")
 
 
 def test_max_concurrent(r: Runner) -> None:
@@ -332,14 +330,17 @@ def test_max_concurrent(r: Runner) -> None:
     with _tempdir() as tmp:
         plan = tmp / "p.md"
         plan.write_text("max concurrent test\n", encoding="utf-8")
-        env = _bg_env(behavior="delay_long",
-                      extra={"FAKE_CODEX_DELAY_SECONDS": "20"})
+        env = _bg_env(behavior="delay_long", extra={"FAKE_CODEX_DELAY_SECONDS": "20"})
 
         first_args = [
-            "start", "plan-review",
-            "--max-concurrent", "2",
-            "--cwd", str(SKILL_DIR),
-            "--last-message-file", str(plan),
+            "start",
+            "plan-review",
+            "--max-concurrent",
+            "2",
+            "--cwd",
+            str(SKILL_DIR),
+            "--last-message-file",
+            str(plan),
         ]
         a, _ = _run_bg(first_args, env=env)
         b, _ = _run_bg(first_args, env=env)
@@ -349,8 +350,7 @@ def test_max_concurrent(r: Runner) -> None:
         # 3rd start with limit=2 should be refused.
         c, _ = _run_bg(first_args, env=env)
         r.eq(c.get("status"), "error", "3rd start refused (status=error)")
-        r.eq(c.get("reason"), "max_concurrent_reached",
-             "reason=max_concurrent_reached")
+        r.eq(c.get("reason"), "max_concurrent_reached", "reason=max_concurrent_reached")
         active_ids = c.get("active_run_ids") or []
         r.eq(len(active_ids), 2, "active_run_ids lists the 2 currently running")
         r.eq(c.get("limit"), 2, "limit echoed back in error response")
@@ -370,6 +370,7 @@ def test_status_not_found(r: Runner) -> None:
 
 
 # ----------------------------------------------------------------------- main
+
 
 def main() -> int:
     if not BG_SCRIPT.exists():

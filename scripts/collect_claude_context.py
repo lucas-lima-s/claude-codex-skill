@@ -12,6 +12,7 @@ Never reads AGENTS.md. Never reads SKILL.md (only CLAUDE.md is ever a
 candidate). Emits JSON by default, or a formatted text block suitable for
 prefixing a Codex prompt.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -20,7 +21,6 @@ import json
 import os
 import sys
 from pathlib import Path
-
 
 CLAUDE_MD = "CLAUDE.md"
 
@@ -207,7 +207,9 @@ def main(argv: list[str] | None = None) -> int:
         global_claude_md=Path(args.global_claude_md) if args.global_claude_md else None,
     )
 
-    payload = json.dumps(result, ensure_ascii=False) if args.format == "json" else format_text(result)
+    payload = (
+        json.dumps(result, ensure_ascii=False) if args.format == "json" else format_text(result)
+    )
     # Force UTF-8 on stdout regardless of the console's code page (Windows
     # defaults to cp1252 in Python 3.8, which crashes on non-ASCII content).
     try:

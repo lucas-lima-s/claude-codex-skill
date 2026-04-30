@@ -8,6 +8,7 @@ as a dialog block suitable for prefixing a Codex prompt.
 
 Output goes to stdout (UTF-8) or `--output <file>`.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -33,7 +34,9 @@ def _find_latest_transcript(cwd: str) -> Path | None:
     candidate_dir = projects_root / slug
     if not candidate_dir.is_dir():
         return None
-    jsonl_files = sorted(candidate_dir.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
+    jsonl_files = sorted(
+        candidate_dir.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True
+    )
     return jsonl_files[0] if jsonl_files else None
 
 
@@ -85,10 +88,18 @@ def _read_turns(path: Path, last_turns: int) -> list[str]:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0] if __doc__ else None)
-    parser.add_argument("--cwd", required=True, help="current working directory; used to find the session slug")
-    parser.add_argument("--last-turns", type=int, default=10, help="keep only the last N turns (0 = all)")
+    parser.add_argument(
+        "--cwd", required=True, help="current working directory; used to find the session slug"
+    )
+    parser.add_argument(
+        "--last-turns", type=int, default=10, help="keep only the last N turns (0 = all)"
+    )
     parser.add_argument("--output", default=None, help="output file (default: stdout)")
-    parser.add_argument("--transcript-path", default=None, help="override transcript jsonl path (skip auto-discovery)")
+    parser.add_argument(
+        "--transcript-path",
+        default=None,
+        help="override transcript jsonl path (skip auto-discovery)",
+    )
     args = parser.parse_args(argv)
 
     if args.transcript_path:

@@ -48,6 +48,7 @@ Environment overrides:
     process environment are inherited as in any POSIX subprocess,
     independently of ``propagate``.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -89,27 +90,38 @@ TELEMETRY_SCHEMA_VERSION = int(_config_get("wrapper.telemetry_schema_version", 1
 DEFAULT_TIMEOUT_SECONDS = float(_config_get("wrapper.default_timeout_seconds", 120.0))
 
 MODE_TIMEOUTS: dict[str, float] = {
-    k: float(v) for k, v in _config_get("wrapper.mode_timeouts", {
-        "ask":         120.0,
-        "verify":      180.0,
-        "plan-review": 300.0,
-        "delegate":    300.0,
-        "insight":     420.0,
-    }).items()
+    k: float(v)
+    for k, v in _config_get(
+        "wrapper.mode_timeouts",
+        {
+            "ask": 120.0,
+            "verify": 180.0,
+            "plan-review": 300.0,
+            "delegate": 300.0,
+            "insight": 420.0,
+        },
+    ).items()
 }
 
-MODE_REASONING: dict[str, str] = dict(_config_get("wrapper.mode_reasoning", {
-    "plan-review": "xhigh",
-    "delegate":    "xhigh",
-    "verify":      "medium",
-    "ask":         "medium",
-    "insight":     "xhigh",
-}))
+MODE_REASONING: dict[str, str] = dict(
+    _config_get(
+        "wrapper.mode_reasoning",
+        {
+            "plan-review": "xhigh",
+            "delegate": "xhigh",
+            "verify": "medium",
+            "ask": "medium",
+            "insight": "xhigh",
+        },
+    )
+)
 
-VALID_REASONING_EFFORTS = tuple(_config_get(
-    "wrapper.valid_reasoning_efforts",
-    ("low", "medium", "high", "xhigh"),
-))
+VALID_REASONING_EFFORTS = tuple(
+    _config_get(
+        "wrapper.valid_reasoning_efforts",
+        ("low", "medium", "high", "xhigh"),
+    )
+)
 
 REVIEW_MODES = ("plan-review", "verify", "ask", "insight")
 ALL_MODES = ("plan-review", "verify", "delegate", "ask", "insight")
@@ -124,8 +136,8 @@ RETRY_INSTRUCTION = (
 
 from normalize_codex_result import normalize  # noqa: E402
 
-
 # --------------------------------------------------------------------------- IO
+
 
 def _emit_json(payload: dict[str, Any]) -> None:
     text = json.dumps(payload, ensure_ascii=False)
@@ -201,6 +213,7 @@ def _codex_child_env() -> dict[str, str]:
 
 # ------------------------------------------------------------------- CONTEXT
 
+
 def _collect_context(cwd: Path, target_path: Path | None) -> str:
     cmd = [_resolve_python(), str(COLLECT_SCRIPT), "--cwd", str(cwd), "--format", "text"]
     if target_path is not None:
@@ -215,6 +228,7 @@ def _collect_context(cwd: Path, target_path: Path | None) -> str:
 
 
 # ------------------------------------------------------------------- PROMPTS
+
 
 def _build_prompt(
     mode: str,
@@ -235,7 +249,7 @@ def _build_prompt(
         "- `findings` must be an array; empty when nothing actionable.\n"
         "- `summary` is one paragraph, plain text, no markdown headings.\n"
         "- If you genuinely cannot proceed without more info, set "
-        "`status=\"needs_input\"` and provide concrete `questions` "
+        '`status="needs_input"` and provide concrete `questions` '
         "(each as {id, question, context}).\n"
     )
 
@@ -288,9 +302,7 @@ def _build_prompt(
     if context_text.strip():
         pieces.append("--- CLAUDE.md context ---\n" + context_text)
     if transcript_text.strip():
-        pieces.append(
-            "--- Recent Claude Code conversation ---\n" + transcript_text
-        )
+        pieces.append("--- Recent Claude Code conversation ---\n" + transcript_text)
     if transcript_jsonl_path.strip():
         pieces.append(
             "--- Full session log (best-effort reference) ---\n"
@@ -305,6 +317,7 @@ def _build_prompt(
 
 
 # -------------------------------------------------------------- CODEX COMMAND
+
 
 def _codex_base_cmd() -> list[str]:
     override = os.environ.get("CODEX_WRAPPER_CODEX_OVERRIDE")
@@ -333,12 +346,16 @@ def _build_codex_command(
         sandbox = "read-only"
     cmd = list(base)
     cmd += [
-        "--sandbox", sandbox,
+        "--sandbox",
+        sandbox,
         "--skip-git-repo-check",
         "--ephemeral",
-        "--color", "never",
-        "-C", str(cwd),
-        "-o", str(output_file),
+        "--color",
+        "never",
+        "-C",
+        str(cwd),
+        "-o",
+        str(output_file),
     ]
     effort = effort_override or MODE_REASONING.get(mode)
     if effort:
@@ -352,6 +369,7 @@ def _build_codex_command(
 
 
 # --------------------------------------------------------------- HEARTBEAT
+
 
 class _Heartbeat:
     """Background thread that writes progress lines to stderr.
@@ -409,6 +427,7 @@ class _Heartbeat:
 
 # --------------------------------------------------------------- ERROR RESULTS
 
+
 def _empty_result(mode: str) -> dict[str, Any]:
     return {
         "status": "ok",
@@ -448,6 +467,7 @@ def _kill_process_tree(pid: int) -> None:
 
 
 # --------------------------------------------------------------- INVOCATION
+
 
 def _run_codex_once(
     mode: str,
@@ -517,8 +537,13 @@ def _run_codex_once(
             raw_output = stdout or ""
 
         if proc.returncode != 0:
-            return raw_output, proc.returncode, t(
-                "wrapper.error.nonzero", code=proc.returncode,
+            return (
+                raw_output,
+                proc.returncode,
+                t(
+                    "wrapper.error.nonzero",
+                    code=proc.returncode,
+                ),
             )
         heartbeat.set_phase("parsing")
         return raw_output, proc.returncode, None
@@ -595,8 +620,7 @@ def _best_effort_partial(mode: str, raw: str) -> dict[str, Any] | None:
 
 def _enrich_delegate_fields(normalized: dict[str, Any], raw_data: dict[str, Any]) -> None:
     """Pass through the optional delegate-specific fields when present."""
-    for key in ("files_created", "files_edited", "files_deleted",
-                "commands_run", "tests_run"):
+    for key in ("files_created", "files_edited", "files_deleted", "commands_run", "tests_run"):
         value = raw_data.get(key)
         if isinstance(value, list):
             normalized[key] = [str(item) for item in value if isinstance(item, (str, int, float))]
@@ -613,11 +637,13 @@ def _enrich_needs_input(normalized: dict[str, Any], raw_data: dict[str, Any]) ->
         question_text = q.get("question")
         if not isinstance(question_text, str) or not question_text.strip():
             continue
-        cleaned.append({
-            "id": str(q.get("id") or f"q{len(cleaned) + 1}"),
-            "question": question_text,
-            "context": str(q.get("context") or ""),
-        })
+        cleaned.append(
+            {
+                "id": str(q.get("id") or f"q{len(cleaned) + 1}"),
+                "question": question_text,
+                "context": str(q.get("context") or ""),
+            }
+        )
     if cleaned:
         normalized["status"] = "needs_input"
         normalized["questions"] = cleaned
@@ -635,11 +661,11 @@ def _try_extract_raw_dict(raw: str) -> dict[str, Any]:
     if fenced_start >= 0:
         end = raw.find("```", fenced_start + 7)
         if end > fenced_start:
-            candidates.append(raw[fenced_start + 7:end].strip())
+            candidates.append(raw[fenced_start + 7 : end].strip())
     open_idx = raw.find("{")
     close_idx = raw.rfind("}")
     if 0 <= open_idx < close_idx:
-        candidates.append(raw[open_idx:close_idx + 1])
+        candidates.append(raw[open_idx : close_idx + 1])
     for c in candidates:
         try:
             data = json.loads(c)
@@ -664,7 +690,12 @@ def _invoke_codex(
     """
     started_at = time.monotonic()
     raw, exit_code, err = _run_codex_once(
-        mode, prompt, cwd, timeout, heartbeat, effort_override=effort_override,
+        mode,
+        prompt,
+        cwd,
+        timeout,
+        heartbeat,
+        effort_override=effort_override,
     )
     retry_count = 0
 
@@ -681,7 +712,12 @@ def _invoke_codex(
         heartbeat.set_phase("retrying")
         retry_prompt = prompt + "\n\n--- Retry instruction ---\n" + RETRY_INSTRUCTION
         raw2, exit_code2, err2 = _run_codex_once(
-            mode, retry_prompt, cwd, timeout, heartbeat, effort_override=effort_override,
+            mode,
+            retry_prompt,
+            cwd,
+            timeout,
+            heartbeat,
+            effort_override=effort_override,
         )
         retry_count = 1
         if err2 is None:
@@ -707,6 +743,7 @@ def _invoke_codex(
 
 # --------------------------------------------------------------- TIMEOUT
 
+
 def _resolve_timeout(mode: str) -> float:
     raw = os.environ.get("CODEX_WRAPPER_TIMEOUT_SECONDS")
     if raw:
@@ -719,6 +756,7 @@ def _resolve_timeout(mode: str) -> float:
 
 
 # --------------------------------------------------------------- TELEMETRY
+
 
 def _write_telemetry(entry: dict[str, Any]) -> None:
     if os.environ.get("CODEX_WRAPPER_TELEMETRY_DISABLED") == "1":
@@ -740,6 +778,7 @@ def _write_telemetry(entry: dict[str, Any]) -> None:
 
 # --------------------------------------------------------------- CLI
 
+
 def _parse_cli(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=t("wrapper.cli.description"))
     parser.add_argument("mode", choices=list(ALL_MODES), help=t("wrapper.cli.help.mode"))
@@ -750,8 +789,9 @@ def _parse_cli(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--task-file", default=None)
     parser.add_argument("--question-file", default=None)
     parser.add_argument("--focus-file", default=None)
-    parser.add_argument("--review-packet-file", default=None,
-                        help=t("wrapper.cli.help.review_packet_file"))
+    parser.add_argument(
+        "--review-packet-file", default=None, help=t("wrapper.cli.help.review_packet_file")
+    )
     parser.add_argument("--transcript-file", default=None)
     parser.add_argument("--transcript-jsonl-path", default=None)
     parser.add_argument(
@@ -774,9 +814,11 @@ def _resolve_effort_override(raw_value: str | None) -> str | None:
     if candidate in VALID_REASONING_EFFORTS:
         return candidate
     print(
-        t("wrapper.warning.invalid_effort",
-          raw_value=repr(raw_value),
-          valid=", ".join(VALID_REASONING_EFFORTS)),
+        t(
+            "wrapper.warning.invalid_effort",
+            raw_value=repr(raw_value),
+            valid=", ".join(VALID_REASONING_EFFORTS),
+        ),
         file=sys.stderr,
         flush=True,
     )
@@ -868,14 +910,22 @@ def main(argv: list[str] | None = None) -> int:
         user_payload = _assemble_user_payload(args)
         heartbeat.set_phase("collecting-context")
         context_text = _collect_context(cwd, target_path)
-        transcript_text = _read_text_safely(Path(args.transcript_file) if args.transcript_file else None)
+        transcript_text = _read_text_safely(
+            Path(args.transcript_file) if args.transcript_file else None
+        )
         transcript_jsonl_path = args.transcript_jsonl_path or ""
-        prompt = _build_prompt(args.mode, context_text, user_payload, transcript_text, transcript_jsonl_path)
+        prompt = _build_prompt(
+            args.mode, context_text, user_payload, transcript_text, transcript_jsonl_path
+        )
         timeout = _resolve_timeout(args.mode)
         effort_override = _resolve_effort_override(getattr(args, "reasoning_effort", None))
         heartbeat.set_phase("invoking-codex")
         result, retry_count, exit_code = _invoke_codex(
-            args.mode, prompt, cwd, timeout, heartbeat,
+            args.mode,
+            prompt,
+            cwd,
+            timeout,
+            heartbeat,
             effort_override=effort_override,
         )
     except Exception as exc:  # wrapper must never raise
@@ -887,19 +937,21 @@ def main(argv: list[str] | None = None) -> int:
     duration = max(0.0, time.monotonic() - started_at)
     result["duration_seconds"] = duration
 
-    _write_telemetry({
-        "schema_version": TELEMETRY_SCHEMA_VERSION,
-        "timestamp": started_iso,
-        "run_id": run_id,
-        "mode": args.mode,
-        "cwd": cwd_str,
-        "duration_ms": int(duration * 1000),
-        "status": result.get("status", "error"),
-        "packet_bytes": len(result.get("raw_codex_output") or ""),
-        "retry_count": retry_count,
-        "error_class": error_class,
-        "exit_code": exit_code,
-    })
+    _write_telemetry(
+        {
+            "schema_version": TELEMETRY_SCHEMA_VERSION,
+            "timestamp": started_iso,
+            "run_id": run_id,
+            "mode": args.mode,
+            "cwd": cwd_str,
+            "duration_ms": int(duration * 1000),
+            "status": result.get("status", "error"),
+            "packet_bytes": len(result.get("raw_codex_output") or ""),
+            "retry_count": retry_count,
+            "error_class": error_class,
+            "exit_code": exit_code,
+        }
+    )
 
     _emit_json(result)
     return 0

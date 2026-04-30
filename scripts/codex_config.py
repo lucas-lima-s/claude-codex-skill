@@ -14,6 +14,7 @@ The module never raises out of ``get`` / ``t``: a missing config file or a
 malformed override falls back to an empty/default state and the literal
 key. Callers can always rely on a string return.
 """
+
 from __future__ import annotations
 
 import json
@@ -50,11 +51,7 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
     """Recursively merge ``override`` into ``base`` (in-place on a copy)."""
     out = dict(base)
     for key, value in override.items():
-        if (
-            key in out
-            and isinstance(out[key], dict)
-            and isinstance(value, dict)
-        ):
+        if key in out and isinstance(out[key], dict) and isinstance(value, dict):
             out[key] = _deep_merge(out[key], value)
         else:
             out[key] = value

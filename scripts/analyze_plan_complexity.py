@@ -38,6 +38,7 @@ Constraints:
   reasons: ["could not read plan: <ClassName>"]}`` so the caller can
   proceed with the regular ``plan-review`` flow.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -67,16 +68,29 @@ PHASE_HEADING_RE = re.compile(
     flags=re.IGNORECASE | re.MULTILINE,
 )
 
-SENSITIVE_KEYWORDS = tuple(_config_get(
-    "complexity.sensitive_keywords",
-    ("auth", "permission", "payment", "fiscal", "deploy", "migration",
-     "schema", "breaking", "rollback"),
-))
+SENSITIVE_KEYWORDS = tuple(
+    _config_get(
+        "complexity.sensitive_keywords",
+        (
+            "auth",
+            "permission",
+            "payment",
+            "fiscal",
+            "deploy",
+            "migration",
+            "schema",
+            "breaking",
+            "rollback",
+        ),
+    )
+)
 
-CROSS_MODULE_DIRS = tuple(_config_get(
-    "complexity.cross_module_dirs",
-    ("handler", "service", "repo", "api", "frontend", "backend"),
-))
+CROSS_MODULE_DIRS = tuple(
+    _config_get(
+        "complexity.cross_module_dirs",
+        ("handler", "service", "repo", "api", "frontend", "backend"),
+    )
+)
 
 
 def _emit(payload: dict[str, Any]) -> None:
@@ -144,29 +158,35 @@ def _score_plan(plan_path: Path) -> tuple[int, list[str]]:
 
     if size_bytes > SIZE_THRESHOLD_BYTES:
         score += 1
-        reasons.append(t(
-            "complexity.reasons.size",
-            kb=f"{size_bytes / 1024:.1f}",
-            threshold=SIZE_THRESHOLD_BYTES // 1024,
-        ))
+        reasons.append(
+            t(
+                "complexity.reasons.size",
+                kb=f"{size_bytes / 1024:.1f}",
+                threshold=SIZE_THRESHOLD_BYTES // 1024,
+            )
+        )
 
     distinct_files = _count_distinct_files(text)
     if distinct_files > DISTINCT_FILES_THRESHOLD:
         score += 1
-        reasons.append(t(
-            "complexity.reasons.distinct_files",
-            n=distinct_files,
-            threshold=DISTINCT_FILES_THRESHOLD,
-        ))
+        reasons.append(
+            t(
+                "complexity.reasons.distinct_files",
+                n=distinct_files,
+                threshold=DISTINCT_FILES_THRESHOLD,
+            )
+        )
 
     phases = _count_phases(text)
     if phases > PHASES_THRESHOLD:
         score += 1
-        reasons.append(t(
-            "complexity.reasons.phases",
-            n=phases,
-            threshold=PHASES_THRESHOLD,
-        ))
+        reasons.append(
+            t(
+                "complexity.reasons.phases",
+                n=phases,
+                threshold=PHASES_THRESHOLD,
+            )
+        )
 
     sensitive_hits = _sensitive_keywords_hit(text)
     if sensitive_hits:
@@ -187,10 +207,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=t("complexity.cli.description"),
     )
-    parser.add_argument("--plan-file", required=True,
-                        help=t("complexity.cli.help.plan_file"))
-    parser.add_argument("--cwd", default=None,
-                        help=t("complexity.cli.help.cwd"))
+    parser.add_argument("--plan-file", required=True, help=t("complexity.cli.help.plan_file"))
+    parser.add_argument("--cwd", default=None, help=t("complexity.cli.help.cwd"))
     args = parser.parse_args(argv)
 
     plan_path = Path(args.plan_file)
@@ -207,11 +225,13 @@ def main(argv: list[str] | None = None) -> int:
         _emit(_safe_failure(t("complexity.error.internal", exc=exc.__class__.__name__)))
         return 0
 
-    _emit({
-        "score": score,
-        "suggest_iterative": score >= THRESHOLD_SCORE,
-        "reasons": reasons,
-    })
+    _emit(
+        {
+            "score": score,
+            "suggest_iterative": score >= THRESHOLD_SCORE,
+            "reasons": reasons,
+        }
+    )
     return 0
 
 

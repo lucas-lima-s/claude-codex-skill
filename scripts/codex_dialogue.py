@@ -46,6 +46,7 @@ Stop signals reported by ``status``:
 
 The runner never raises: every error path emits ``status=error`` JSON.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -167,16 +168,21 @@ def _summarise_turn(turn: int, findings_payload: dict[str, Any]) -> str:
         loc = (f.get("location") or "").strip()
         bits = [b for b in [sev, title, loc] if b]
         titles.append(" / ".join(bits) if bits else t("dialogue.history.untitled"))
-    bullets = "\n".join(f"  - {title}" for title in titles) or f"  - {t('dialogue.history.no_findings')}"
+    bullets = (
+        "\n".join(f"  - {title}" for title in titles) or f"  - {t('dialogue.history.no_findings')}"
+    )
     return (
         t(
             "dialogue.history.turn_header",
             turn=turn,
             severity=severity,
             n=len(findings),
-        ) + "\n"
-        + t("dialogue.history.summary_label", summary=summary_short) + "\n"
-        + t("dialogue.history.findings_label") + "\n"
+        )
+        + "\n"
+        + t("dialogue.history.summary_label", summary=summary_short)
+        + "\n"
+        + t("dialogue.history.findings_label")
+        + "\n"
         + bullets
     )
 
@@ -219,12 +225,14 @@ def _stop_signal(dialogue_dir: Path, meta: dict[str, Any]) -> tuple[str | None, 
     if current_turn >= 2:
         prev = _read_findings(dialogue_dir, current_turn - 1) or {}
         last = _read_findings(dialogue_dir, current_turn) or {}
+
         def _clean(p: dict[str, Any]) -> bool:
             return (
                 not (p.get("findings") or [])
                 and (p.get("severity") or "low") == "low"
                 and not p.get("block_recommended")
             )
+
         if _clean(prev) and _clean(last):
             return "converged", {}
 
@@ -232,6 +240,7 @@ def _stop_signal(dialogue_dir: Path, meta: dict[str, Any]) -> tuple[str | None, 
     if current_turn >= 2:
         prev = _read_findings(dialogue_dir, current_turn - 1) or {}
         last = _read_findings(dialogue_dir, current_turn) or {}
+
         def _high_keys(p: dict[str, Any]) -> set:
             keys = set()
             for f in p.get("findings") or []:
@@ -239,9 +248,9 @@ def _stop_signal(dialogue_dir: Path, meta: dict[str, Any]) -> tuple[str | None, 
                     continue
                 if (f.get("severity") or "").lower() != "high":
                     continue
-                keys.add(((f.get("title") or "").strip(),
-                          (f.get("location") or "").strip()))
+                keys.add(((f.get("title") or "").strip(), (f.get("location") or "").strip()))
             return keys
+
         common_high = _high_keys(prev) & _high_keys(last)
         if common_high:
             sample = next(iter(common_high))
@@ -271,17 +280,25 @@ def _invoke_wrapper_plan_review(
             transcript_path = None
 
     cmd = [
-        _resolve_python(), str(WRAPPER), "plan-review",
-        "--cwd", str(cwd),
-        "--last-message-file", str(plan_path),
+        _resolve_python(),
+        str(WRAPPER),
+        "plan-review",
+        "--cwd",
+        str(cwd),
+        "--last-message-file",
+        str(plan_path),
     ]
     if transcript_path is not None:
         cmd += ["--transcript-file", str(transcript_path)]
 
     try:
         proc = subprocess.run(
-            cmd, capture_output=True, text=True, encoding="utf-8",
-            errors="replace", timeout=600,
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=600,
         )
     except subprocess.TimeoutExpired:
         return {
@@ -315,13 +332,16 @@ def _invoke_wrapper_plan_review(
 
 # --------------------------------------------------------------- subcommands
 
+
 def cmd_start(args: argparse.Namespace) -> int:
     if not getattr(args, "accepted_by_user", False):
-        _emit({
-            "status": "error",
-            "reason": "needs_user_acceptance",
-            "hint": t("dialogue.hint.needs_acceptance"),
-        })
+        _emit(
+            {
+                "status": "error",
+                "reason": "needs_user_acceptance",
+                "hint": t("dialogue.hint.needs_acceptance"),
+            }
+        )
         return 0
     plan_path = Path(args.plan_file)
     if not plan_path.is_file():
@@ -339,7 +359,9 @@ def cmd_start(args: argparse.Namespace) -> int:
     (dialogue_dir / "turn_1_plan.md").write_text(plan_text, encoding="utf-8")
 
     findings = _invoke_wrapper_plan_review(
-        plan_path=plan_path, cwd=cwd, dialogue_dir=dialogue_dir,
+        plan_path=plan_path,
+        cwd=cwd,
+        dialogue_dir=dialogue_dir,
         history_text="",
     )
     _write_findings(dialogue_dir, 1, findings)
@@ -355,15 +377,17 @@ def cmd_start(args: argparse.Namespace) -> int:
     _write_meta(dialogue_dir, meta)
 
     stop_reason, stop_details = _stop_signal(dialogue_dir, meta)
-    _emit({
-        "status": "ok",
-        "dialogue_id": dialogue_id,
-        "turn": 1,
-        "max_turns": max_turns,
-        "stop_reason": stop_reason,
-        "stop_details": stop_details,
-        "findings_payload": findings,
-    })
+    _emit(
+        {
+            "status": "ok",
+            "dialogue_id": dialogue_id,
+            "turn": 1,
+            "max_turns": max_turns,
+            "stop_reason": stop_reason,
+            "stop_details": stop_details,
+            "findings_payload": findings,
+        }
+    )
     return 0
 
 
@@ -391,7 +415,9 @@ def cmd_next_turn(args: argparse.Namespace) -> int:
 
     cwd = Path(meta.get("cwd") or os.getcwd())
     findings = _invoke_wrapper_plan_review(
-        plan_path=plan_path, cwd=cwd, dialogue_dir=dialogue_dir,
+        plan_path=plan_path,
+        cwd=cwd,
+        dialogue_dir=dialogue_dir,
         history_text=history_preface,
     )
     _write_findings(dialogue_dir, next_turn, findings)
@@ -400,15 +426,17 @@ def cmd_next_turn(args: argparse.Namespace) -> int:
     _write_meta(dialogue_dir, meta)
 
     stop_reason, stop_details = _stop_signal(dialogue_dir, meta)
-    _emit({
-        "status": "ok",
-        "dialogue_id": args.dialogue_id,
-        "turn": next_turn,
-        "max_turns": int(meta.get("max_turns") or DEFAULT_MAX_TURNS),
-        "stop_reason": stop_reason,
-        "stop_details": stop_details,
-        "findings_payload": findings,
-    })
+    _emit(
+        {
+            "status": "ok",
+            "dialogue_id": args.dialogue_id,
+            "turn": next_turn,
+            "max_turns": int(meta.get("max_turns") or DEFAULT_MAX_TURNS),
+            "stop_reason": stop_reason,
+            "stop_details": stop_details,
+            "findings_payload": findings,
+        }
+    )
     return 0
 
 
@@ -419,16 +447,18 @@ def cmd_status(args: argparse.Namespace) -> int:
         _emit({"status": "error", "reason": "dialogue_not_found"})
         return 0
     stop_reason, stop_details = _stop_signal(dialogue_dir, meta)
-    _emit({
-        "status": "ok",
-        "dialogue_id": args.dialogue_id,
-        "current_turn": int(meta.get("current_turn") or 0),
-        "max_turns": int(meta.get("max_turns") or DEFAULT_MAX_TURNS),
-        "dialogue_status": meta.get("status"),
-        "stop_reason": stop_reason,
-        "stop_details": stop_details,
-        "started_at": meta.get("started_at"),
-    })
+    _emit(
+        {
+            "status": "ok",
+            "dialogue_id": args.dialogue_id,
+            "current_turn": int(meta.get("current_turn") or 0),
+            "max_turns": int(meta.get("max_turns") or DEFAULT_MAX_TURNS),
+            "dialogue_status": meta.get("status"),
+            "stop_reason": stop_reason,
+            "stop_details": stop_details,
+            "started_at": meta.get("started_at"),
+        }
+    )
     return 0
 
 
@@ -522,18 +552,21 @@ def cmd_finish(args: argparse.Namespace) -> int:
     meta.setdefault("finished_at", _now_iso())
     _write_meta(dialogue_dir, meta)
 
-    _emit({
-        "status": "ok",
-        "dialogue_id": args.dialogue_id,
-        "final_plan_path": str(final_plan_path),
-        "dialogue_log_path": str(log_path),
-        "turns_completed": current_turn,
-        "stop_reason": stop_reason,
-    })
+    _emit(
+        {
+            "status": "ok",
+            "dialogue_id": args.dialogue_id,
+            "final_plan_path": str(final_plan_path),
+            "dialogue_log_path": str(log_path),
+            "turns_completed": current_turn,
+            "stop_reason": stop_reason,
+        }
+    )
     return 0
 
 
 # --------------------------------------------------------------- main
+
 
 def _parse_cli(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=t("dialogue.cli.description"))
@@ -543,12 +576,19 @@ def _parse_cli(argv: list[str] | None = None) -> argparse.Namespace:
     p_start.add_argument("--plan-file", required=True)
     p_start.add_argument("--cwd", default=None)
     p_start.add_argument(
-        "--max-turns", type=int, default=None,
-        help=t("dialogue.cli.help.max_turns",
-               default=DEFAULT_MAX_TURNS, min=MIN_MAX_TURNS, max=MAX_MAX_TURNS),
+        "--max-turns",
+        type=int,
+        default=None,
+        help=t(
+            "dialogue.cli.help.max_turns",
+            default=DEFAULT_MAX_TURNS,
+            min=MIN_MAX_TURNS,
+            max=MAX_MAX_TURNS,
+        ),
     )
     p_start.add_argument(
-        "--accepted-by-user", action="store_true",
+        "--accepted-by-user",
+        action="store_true",
         help=t("dialogue.cli.help.accepted_by_user"),
     )
 
@@ -576,20 +616,22 @@ def main(argv: list[str] | None = None) -> int:
     if args.subcommand not in _PASSIVE_SUBCOMMANDS:
         ensure_setup_complete()
     handler = {
-        "start":     cmd_start,
+        "start": cmd_start,
         "next-turn": cmd_next_turn,
-        "status":    cmd_status,
-        "abort":     cmd_abort,
-        "finish":    cmd_finish,
+        "status": cmd_status,
+        "abort": cmd_abort,
+        "finish": cmd_finish,
     }[args.subcommand]
     try:
         return handler(args)
     except Exception as exc:  # never raise out of CLI
-        _emit({
-            "status": "error",
-            "reason": f"internal_error: {exc.__class__.__name__}",
-            "subcommand": args.subcommand,
-        })
+        _emit(
+            {
+                "status": "error",
+                "reason": f"internal_error: {exc.__class__.__name__}",
+                "subcommand": args.subcommand,
+            }
+        )
         return 0
 
 

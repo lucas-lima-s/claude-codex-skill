@@ -21,6 +21,7 @@ The output always conforms to::
         "mode":               "plan-review" | "verify" | "delegate",
     }
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -95,7 +96,9 @@ def _normalize_findings(raw_findings: Any) -> list[dict[str, str]]:
     return out
 
 
-def _compute_fingerprint(findings: list[dict[str, str]], severity: str, block_recommended: bool) -> str:
+def _compute_fingerprint(
+    findings: list[dict[str, str]], severity: str, block_recommended: bool
+) -> str:
     if not findings:
         return ""
     canonical = [
@@ -107,9 +110,7 @@ def _compute_fingerprint(findings: list[dict[str, str]], severity: str, block_re
         }
         for f in findings
     ]
-    canonical.sort(
-        key=lambda x: (x["severity"], x["category"], x["title"], x["location"])
-    )
+    canonical.sort(key=lambda x: (x["severity"], x["category"], x["title"], x["location"]))
     payload = {
         "findings": canonical,
         "severity": severity,

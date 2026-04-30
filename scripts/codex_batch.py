@@ -35,6 +35,7 @@ Telemetry rows for each child run are written by the underlying wrapper
 (``cache/runs.jsonl``); this script also emits one ``batch_id`` summary row
 through the wrapper-private channel so the runs can be correlated.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -80,9 +81,7 @@ def _normalize_paths(paths: list[str], base: Path) -> list[Path]:
     return out
 
 
-def _validate_disjoint_write_sets(
-    tasks: list[dict[str, Any]]
-) -> list[dict[str, Any]] | None:
+def _validate_disjoint_write_sets(tasks: list[dict[str, Any]]) -> list[dict[str, Any]] | None:
     """Return None when no overlap, else a list of overlap descriptors.
 
     Each descriptor: {ids: [a, b], path: <conflict>}.
@@ -124,9 +123,7 @@ def _check_write_set_violation(
     return False
 
 
-def _run_wrapper(
-    sub_mode: str, task: dict[str, Any], batch_id: str
-) -> tuple[str, dict[str, Any]]:
+def _run_wrapper(sub_mode: str, task: dict[str, Any], batch_id: str) -> tuple[str, dict[str, Any]]:
     """Run one wrapper invocation. Returns (id, result_dict)."""
     task_id = str(task.get("id") or uuid.uuid4().hex[:8])
     cwd = task.get("cwd") or os.getcwd()
@@ -139,18 +136,26 @@ def _run_wrapper(
             q_path = payload_dir / f"{task_id}.txt"
             q_path.write_text(question, encoding="utf-8")
             cmd = [
-                _resolve_python(), str(WRAPPER), "ask",
-                "--cwd", str(cwd),
-                "--question-file", str(q_path),
+                _resolve_python(),
+                str(WRAPPER),
+                "ask",
+                "--cwd",
+                str(cwd),
+                "--question-file",
+                str(q_path),
             ]
         else:  # batch-delegate
             task_text = task.get("task") or ""
             t_path = payload_dir / f"{task_id}.txt"
             t_path.write_text(task_text, encoding="utf-8")
             cmd = [
-                _resolve_python(), str(WRAPPER), "delegate",
-                "--cwd", str(cwd),
-                "--task-file", str(t_path),
+                _resolve_python(),
+                str(WRAPPER),
+                "delegate",
+                "--cwd",
+                str(cwd),
+                "--task-file",
+                str(t_path),
             ]
         target = task.get("target_path")
         if target:
@@ -163,8 +168,13 @@ def _run_wrapper(
 
         try:
             proc = subprocess.run(
-                cmd, capture_output=True, text=True, encoding="utf-8",
-                errors="replace", env=env, timeout=900,
+                cmd,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                env=env,
+                timeout=900,
             )
         except subprocess.TimeoutExpired:
             return task_id, {
@@ -231,10 +241,7 @@ def _run_batch(sub_mode: str, batch: dict[str, Any]) -> dict[str, Any]:
 
     items: list[dict[str, Any]] = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_parallel) as pool:
-        futures = {
-            pool.submit(_run_wrapper, sub_mode, task, batch_id): task
-            for task in tasks
-        }
+        futures = {pool.submit(_run_wrapper, sub_mode, task, batch_id): task for task in tasks}
         for future in concurrent.futures.as_completed(futures):
             task = futures[future]
             try:
@@ -297,10 +304,15 @@ def main(argv: list[str] | None = None) -> int:
     try:
         payload = json.loads(Path(args.input_file).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        print(json.dumps({
-            "status": "error",
-            "summary": t("batch.summary.read_failure", exc=exc.__class__.__name__),
-        }, ensure_ascii=False))
+        print(
+            json.dumps(
+                {
+                    "status": "error",
+                    "summary": t("batch.summary.read_failure", exc=exc.__class__.__name__),
+                },
+                ensure_ascii=False,
+            )
+        )
         return 0
 
     result = _run_batch(args.sub_mode, payload)

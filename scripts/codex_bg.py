@@ -45,6 +45,7 @@ Active runs are never touched.
 This script never raises: every error path returns a JSON object with
 ``status=error`` and a short ``reason`` so callers can react programmatically.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -121,7 +122,9 @@ def _is_pid_alive(pid: int) -> bool:
         try:
             proc = subprocess.run(
                 ["tasklist", "/FI", f"PID eq {pid}"],
-                capture_output=True, text=True, timeout=5,
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
         except (OSError, subprocess.TimeoutExpired):
             return False
@@ -141,7 +144,8 @@ def _kill_process_tree(pid: int) -> None:
         try:
             subprocess.run(
                 ["taskkill", "/F", "/T", "/PID", str(pid)],
-                capture_output=True, timeout=5,
+                capture_output=True,
+                timeout=5,
             )
         except (OSError, subprocess.TimeoutExpired):
             pass
@@ -237,6 +241,7 @@ def _resolve_max_concurrent(cli_value: int | None) -> int:
 
 # --------------------------------------------------------------- subcommands
 
+
 def cmd_start(args: argparse.Namespace) -> int:
     _cleanup_old_runs()
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -244,12 +249,14 @@ def cmd_start(args: argparse.Namespace) -> int:
     max_conc = _resolve_max_concurrent(args.max_concurrent)
     active = _list_active_run_ids()
     if len(active) >= max_conc:
-        _emit({
-            "status": "error",
-            "reason": "max_concurrent_reached",
-            "active_run_ids": active,
-            "limit": max_conc,
-        })
+        _emit(
+            {
+                "status": "error",
+                "reason": "max_concurrent_reached",
+                "active_run_ids": active,
+                "limit": max_conc,
+            }
+        )
         return 0
 
     run_id = uuid.uuid4().hex[:12]
@@ -277,9 +284,8 @@ def cmd_start(args: argparse.Namespace) -> int:
     creationflags = 0
     start_new_session = False
     if sys.platform == "win32":
-        creationflags = (
-            getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-            | getattr(subprocess, "DETACHED_PROCESS", 0)
+        creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(
+            subprocess, "DETACHED_PROCESS", 0
         )
     else:
         start_new_session = True
@@ -329,13 +335,15 @@ def cmd_start(args: argparse.Namespace) -> int:
     }
     _write_meta(run_dir, meta)
 
-    _emit({
-        "status": "ok",
-        "run_id": run_id,
-        "pid": proc.pid,
-        "started_at": started_at,
-        "mode": args.mode,
-    })
+    _emit(
+        {
+            "status": "ok",
+            "run_id": run_id,
+            "pid": proc.pid,
+            "started_at": started_at,
+            "mode": args.mode,
+        }
+    )
     return 0
 
 
@@ -356,15 +364,17 @@ def cmd_status(args: argparse.Namespace) -> int:
     elif status in TERMINAL_STATUSES:
         _write_meta(run_dir, meta)
 
-    _emit({
-        "status": status,
-        "run_id": args.run_id,
-        "mode": meta.get("mode"),
-        "pid": meta.get("pid"),
-        "pid_alive": pid_alive,
-        "started_at": meta.get("started_at"),
-        "finished_at": meta.get("finished_at"),
-    })
+    _emit(
+        {
+            "status": status,
+            "run_id": args.run_id,
+            "mode": meta.get("mode"),
+            "pid": meta.get("pid"),
+            "pid_alive": pid_alive,
+            "started_at": meta.get("started_at"),
+            "finished_at": meta.get("finished_at"),
+        }
+    )
     return 0
 
 
@@ -390,8 +400,13 @@ def cmd_output(args: argparse.Namespace) -> int:
         text = output_path.read_text(encoding="utf-8", errors="replace")
         data = json.loads(text)
     except (OSError, json.JSONDecodeError) as exc:
-        _emit({"status": "error", "reason": f"unreadable_output: {exc.__class__.__name__}",
-               "run_id": args.run_id})
+        _emit(
+            {
+                "status": "error",
+                "reason": f"unreadable_output: {exc.__class__.__name__}",
+                "run_id": args.run_id,
+            }
+        )
         return 0
 
     if not isinstance(data, dict):
@@ -423,12 +438,14 @@ def cmd_cancel(args: argparse.Namespace) -> int:
     meta.setdefault("finished_at", _now_iso())
     _write_meta(run_dir, meta)
 
-    _emit({
-        "status": "ok",
-        "run_id": args.run_id,
-        "cancelled": True,
-        "was_alive": was_alive,
-    })
+    _emit(
+        {
+            "status": "ok",
+            "run_id": args.run_id,
+            "cancelled": True,
+            "was_alive": was_alive,
+        }
+    )
     return 0
 
 
@@ -443,14 +460,16 @@ def cmd_list(args: argparse.Namespace) -> int:
             if not meta:
                 continue
             status, _alive = _resolve_status(run_dir, meta)
-            runs.append({
-                "run_id": run_dir.name,
-                "mode": meta.get("mode"),
-                "status": status,
-                "started_at": meta.get("started_at"),
-                "finished_at": meta.get("finished_at"),
-                "pid": meta.get("pid"),
-            })
+            runs.append(
+                {
+                    "run_id": run_dir.name,
+                    "mode": meta.get("mode"),
+                    "status": status,
+                    "started_at": meta.get("started_at"),
+                    "finished_at": meta.get("finished_at"),
+                    "pid": meta.get("pid"),
+                }
+            )
 
     runs.sort(key=lambda r: str(r.get("started_at") or ""), reverse=True)
     limit = max(1, int(args.limit or LIST_DEFAULT_LIMIT))
@@ -460,6 +479,7 @@ def cmd_list(args: argparse.Namespace) -> int:
 
 # --------------------------------------------------------------------- main
 
+
 def _parse_cli(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=t("bg.cli.description"))
     sub = parser.add_subparsers(dest="subcommand", required=True)
@@ -468,7 +488,9 @@ def _parse_cli(argv: list[str] | None = None) -> argparse.Namespace:
     p_start.add_argument("mode", help=t("bg.cli.help.mode"))
     p_start.add_argument("--cwd", default=None, help=t("bg.cli.help.cwd"))
     p_start.add_argument(
-        "--max-concurrent", type=int, default=None,
+        "--max-concurrent",
+        type=int,
+        default=None,
         help=t("bg.cli.help.max_concurrent", default=DEFAULT_MAX_CONCURRENT),
     )
     # Wrapper-specific flags (--last-message-file, --task-file, --target-path,
@@ -505,20 +527,22 @@ def main(argv: list[str] | None = None) -> int:
     if args.subcommand not in _PASSIVE_SUBCOMMANDS:
         ensure_setup_complete()
     handler = {
-        "start":  cmd_start,
+        "start": cmd_start,
         "status": cmd_status,
         "output": cmd_output,
         "cancel": cmd_cancel,
-        "list":   cmd_list,
+        "list": cmd_list,
     }[args.subcommand]
     try:
         return handler(args)
     except Exception as exc:  # never raise; same contract as the wrapper
-        _emit({
-            "status": "error",
-            "reason": f"internal_error: {exc.__class__.__name__}",
-            "subcommand": args.subcommand,
-        })
+        _emit(
+            {
+                "status": "error",
+                "reason": f"internal_error: {exc.__class__.__name__}",
+                "subcommand": args.subcommand,
+            }
+        )
         return 0
 
 

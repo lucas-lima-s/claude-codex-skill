@@ -22,6 +22,7 @@ Coverage:
 Insight is intentionally skipped (5-min timeout, expensive) — the wrapper
 contract for that mode is already validated against the fake.
 """
+
 from __future__ import annotations
 
 import json
@@ -52,6 +53,7 @@ PYTHON = os.environ.get("SKILLS_PYTHON") or sys.executable
 
 
 # ----------------------------------------------------------------------- runner
+
 
 class Runner:
     def __init__(self) -> None:
@@ -94,7 +96,11 @@ class Runner:
         if needle in haystack:
             self.passed_(label)
         else:
-            short = (haystack[:200] + "...") if isinstance(haystack, str) and len(haystack) > 200 else haystack
+            short = (
+                (haystack[:200] + "...")
+                if isinstance(haystack, str) and len(haystack) > 200
+                else haystack
+            )
             self.fail(label, f"{needle!r} not found in {short!r}")
 
     def in_any(self, needles: list[str], haystack: str, label: str) -> None:
@@ -108,11 +114,15 @@ class Runner:
         if result.get("status") in allowed:
             self.passed_(label)
         else:
-            self.fail(label, f"status={result.get('status')!r} not in {allowed!r}; "
-                             f"summary={result.get('summary', '')[:120]!r}")
+            self.fail(
+                label,
+                f"status={result.get('status')!r} not in {allowed!r}; "
+                f"summary={result.get('summary', '')[:120]!r}",
+            )
 
 
 # ----------------------------------------------------------------------- helpers
+
 
 def _live_env(timeout: str = "300") -> dict[str, str]:
     env = os.environ.copy()
@@ -124,7 +134,9 @@ def _live_env(timeout: str = "300") -> dict[str, str]:
 
 
 def _run_wrapper(
-    mode: str, args: list[str], timeout: int = 300,
+    mode: str,
+    args: list[str],
+    timeout: int = 300,
     extra_env: dict[str, str] | None = None,
 ) -> tuple[dict[str, Any], float]:
     cmd = [PYTHON, str(WRAPPER), mode] + args
@@ -134,23 +146,35 @@ def _run_wrapper(
     started = time.monotonic()
     try:
         proc = subprocess.run(
-            cmd, env=env, capture_output=True, text=True,
-            encoding="utf-8", errors="replace", timeout=timeout + 60,
+            cmd,
+            env=env,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout + 60,
         )
     except subprocess.TimeoutExpired:
-        return ({"status": "error", "summary": "wrapper subprocess hard-timeout"},
-                time.monotonic() - started)
+        return (
+            {"status": "error", "summary": "wrapper subprocess hard-timeout"},
+            time.monotonic() - started,
+        )
     elapsed = time.monotonic() - started
     try:
         result = json.loads(proc.stdout or "{}")
     except json.JSONDecodeError:
-        result = {"status": "error", "summary": "non-JSON wrapper stdout",
-                  "_stdout": proc.stdout[:1000], "_stderr": proc.stderr[:500]}
+        result = {
+            "status": "error",
+            "summary": "non-JSON wrapper stdout",
+            "_stdout": proc.stdout[:1000],
+            "_stderr": proc.stderr[:500],
+        }
     return result, elapsed
 
 
-def _run_batch(sub_mode: str, payload: dict[str, Any], timeout: int = 600
-              ) -> tuple[dict[str, Any], float]:
+def _run_batch(
+    sub_mode: str, payload: dict[str, Any], timeout: int = 600
+) -> tuple[dict[str, Any], float]:
     with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False)
         path = f.name
@@ -160,12 +184,19 @@ def _run_batch(sub_mode: str, payload: dict[str, Any], timeout: int = 600
         started = time.monotonic()
         try:
             proc = subprocess.run(
-                cmd, env=env, capture_output=True, text=True,
-                encoding="utf-8", errors="replace", timeout=timeout,
+                cmd,
+                env=env,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=timeout,
             )
         except subprocess.TimeoutExpired:
-            return ({"status": "error", "summary": "batch subprocess hard-timeout"},
-                    time.monotonic() - started)
+            return (
+                {"status": "error", "summary": "batch subprocess hard-timeout"},
+                time.monotonic() - started,
+            )
         elapsed = time.monotonic() - started
         try:
             result = json.loads(proc.stdout or "{}")
@@ -196,6 +227,7 @@ def _is_codex_available() -> bool:
 
 # ----------------------------------------------------------------------- tests
 
+
 def test_plan_review_real(r: Runner) -> None:
     r.section("LIVE plan-review")
     with _tempdir() as tmp:
@@ -220,7 +252,9 @@ def test_plan_review_real(r: Runner) -> None:
         r.truthy("fingerprint" in result, "plan-review fingerprint present")
         # findings is a list (may be empty if Codex thinks the plan is fine)
         r.truthy(isinstance(result.get("findings"), list), "plan-review findings is list")
-        print(f"     elapsed={elapsed:.1f}s  output_bytes={len(result.get('raw_codex_output') or '')}")
+        print(
+            f"     elapsed={elapsed:.1f}s  output_bytes={len(result.get('raw_codex_output') or '')}"
+        )
 
 
 def test_ask_real(r: Runner) -> None:
@@ -283,10 +317,10 @@ def test_verify_real(r: Runner) -> None:
         r.eq(result.get("mode"), "verify", "verify mode")
         # Codex should call out the syntax problem.
         blob = (
-            result.get("summary", "") + " "
+            result.get("summary", "")
+            + " "
             + " ".join(
-                f.get("title", "") + " " + f.get("detail", "")
-                for f in result.get("findings", [])
+                f.get("title", "") + " " + f.get("detail", "") for f in result.get("findings", [])
             )
         ).lower()
         r.in_any(
@@ -365,21 +399,19 @@ def test_delegate_outside_workspace(r: Runner) -> None:
             and target_file.read_text(encoding="utf-8", errors="replace").strip()
             == "EDITED-BY-CODEX"
         )
-        r.truthy(edited_ok,
-                 "delegate-out: external.txt was REWRITTEN to 'EDITED-BY-CODEX'")
-        r.truthy(not placeholder.exists(),
-                 "delegate-out: deleteme.txt was actually deleted")
+        r.truthy(edited_ok, "delegate-out: external.txt was REWRITTEN to 'EDITED-BY-CODEX'")
+        r.truthy(not placeholder.exists(), "delegate-out: deleteme.txt was actually deleted")
 
         # The wrapper should also surface the change in the JSON output.
         edited_paths = [str(p).lower() for p in result.get("files_edited") or []]
         deleted_paths = [str(p).lower() for p in result.get("files_deleted") or []]
         r.truthy(
             any("external.txt" in p for p in edited_paths),
-            "delegate-out: files_edited reports external.txt"
+            "delegate-out: files_edited reports external.txt",
         )
         r.truthy(
             any("deleteme.txt" in p for p in deleted_paths),
-            "delegate-out: files_deleted reports deleteme.txt"
+            "delegate-out: files_deleted reports deleteme.txt",
         )
         print(f"     elapsed={elapsed:.1f}s  external_dir={external_dir}")
     finally:
@@ -394,23 +426,27 @@ def test_batch_ask_real(r: Runner) -> None:
         payload = {
             "max_parallel": 3,
             "tasks": [
-                {"id": "math", "question":
-                 "Reply with one short sentence: what is 12 times 12?",
-                 "cwd": str(tmp)},
-                {"id": "geo", "question":
-                 "Reply with one word: capital of France?",
-                 "cwd": str(tmp)},
-                {"id": "hex", "question":
-                 "Reply with one number only: hexadecimal value of 255 in decimal?",
-                 "cwd": str(tmp)},
+                {
+                    "id": "math",
+                    "question": "Reply with one short sentence: what is 12 times 12?",
+                    "cwd": str(tmp),
+                },
+                {
+                    "id": "geo",
+                    "question": "Reply with one word: capital of France?",
+                    "cwd": str(tmp),
+                },
+                {
+                    "id": "hex",
+                    "question": "Reply with one number only: hexadecimal value of 255 in decimal?",
+                    "cwd": str(tmp),
+                },
             ],
         }
         result, elapsed = _run_batch("batch-ask", payload, timeout=600)
         r.total_seconds += elapsed
         for it in result.get("items", []):
-            r.token_proxy_bytes += len(
-                (it.get("result") or {}).get("raw_codex_output") or ""
-            )
+            r.token_proxy_bytes += len((it.get("result") or {}).get("raw_codex_output") or "")
 
         r.eq(result.get("status"), "ok", "batch-ask aggregate status=ok")
         items = result.get("items", [])
@@ -422,8 +458,7 @@ def test_batch_ask_real(r: Runner) -> None:
         by_id = {i["id"]: (i.get("result") or {}).get("summary", "").lower() for i in items}
         r.in_any(["144"], by_id.get("math", ""), "batch-ask/math answers 144")
         r.in_any(["paris"], by_id.get("geo", ""), "batch-ask/geo answers Paris")
-        r.in_any(["ff", "0xff", "255"], by_id.get("hex", ""),
-                 "batch-ask/hex mentions ff or 255")
+        r.in_any(["ff", "0xff", "255"], by_id.get("hex", ""), "batch-ask/hex mentions ff or 255")
         print(f"     elapsed={elapsed:.1f}s  items_summary={result.get('summary')}")
 
 
@@ -432,8 +467,7 @@ def test_needs_input_real(r: Runner) -> None:
     with _tempdir() as tmp:
         plan = tmp / "plan.md"
         plan.write_text(
-            "# Plan\n\n"
-            "Refactor the system. Improve performance. Add tests.\n",
+            "# Plan\n\n" "Refactor the system. Improve performance. Add tests.\n",
             encoding="utf-8",
         )
         result, elapsed = _run_wrapper(
@@ -446,11 +480,7 @@ def test_needs_input_real(r: Runner) -> None:
 
         # Either Codex calls it out via findings, asks for clarification, or
         # gracefully reports the plan is too vague — all are valid outcomes.
-        r.status_in(
-            result,
-            ("ok", "needs_input"),
-            "vague-plan status ok|needs_input"
-        )
+        r.status_in(result, ("ok", "needs_input"), "vague-plan status ok|needs_input")
         # Expect at least one of: needs_input questions, or low confidence,
         # or findings flagging vagueness.
         signals_vagueness = (
@@ -458,18 +488,30 @@ def test_needs_input_real(r: Runner) -> None:
             or len(result.get("findings", [])) > 0
             or any(
                 k in (result.get("summary") or "").lower()
-                for k in ("vague", "ambig", "unclear", "missing", "specific",
-                          "scope", "details", "context")
+                for k in (
+                    "vague",
+                    "ambig",
+                    "unclear",
+                    "missing",
+                    "specific",
+                    "scope",
+                    "details",
+                    "context",
+                )
             )
         )
-        r.truthy(signals_vagueness,
-                 "vague-plan: Codex signals vagueness (needs_input/findings/summary)")
-        print(f"     elapsed={elapsed:.1f}s  status={result.get('status')}  "
-              f"findings={len(result.get('findings', []))}  "
-              f"questions={len(result.get('questions', []))}")
+        r.truthy(
+            signals_vagueness, "vague-plan: Codex signals vagueness (needs_input/findings/summary)"
+        )
+        print(
+            f"     elapsed={elapsed:.1f}s  status={result.get('status')}  "
+            f"findings={len(result.get('findings', []))}  "
+            f"questions={len(result.get('questions', []))}"
+        )
 
 
 # ----------------------------------------------------------------------- main
+
 
 def main() -> int:
     if not _is_codex_available():
@@ -489,8 +531,10 @@ def main() -> int:
 
     duration = time.monotonic() - started
     print()
-    print(f"=== summary: {r.passed} passed, {r.failed} failed, "
-          f"{r.skipped} skipped in {duration:.1f}s wall-clock ===")
+    print(
+        f"=== summary: {r.passed} passed, {r.failed} failed, "
+        f"{r.skipped} skipped in {duration:.1f}s wall-clock ==="
+    )
     print(f"     Codex sub-process time:   {r.total_seconds:.1f}s")
     print(f"     Codex output bytes total: {r.token_proxy_bytes}  (proxy for token spend)")
     if r.failures:

@@ -20,6 +20,7 @@ Selection priority when more than 12 files are cited:
   2. files mentioned more than once;
   3. the original mention order.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -29,7 +30,6 @@ import subprocess
 import sys
 from collections import OrderedDict
 from pathlib import Path
-
 
 DEFAULT_MAX_FILES = 12
 DEFAULT_MAX_LINES = 300
@@ -131,9 +131,9 @@ def _select_files(
     items = list(cited.items())
     items.sort(
         key=lambda item: (
-            0 if item[1].lines else 1,   # lines-cited first
-            -item[1].count,              # frequency desc
-            item[1].first_index,         # original order
+            0 if item[1].lines else 1,  # lines-cited first
+            -item[1].count,  # frequency desc
+            item[1].first_index,  # original order
         )
     )
     selected = [path for path, _ in items[:limit]]
@@ -166,7 +166,9 @@ def _git_branch(cwd: Path) -> str:
     try:
         proc = subprocess.run(
             ["git", "-C", str(cwd), "rev-parse", "--abbrev-ref", "HEAD"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
     except (OSError, subprocess.TimeoutExpired):
         return ""
@@ -179,7 +181,9 @@ def _git_status(cwd: Path) -> str:
     try:
         proc = subprocess.run(
             ["git", "-C", str(cwd), "status", "--short"],
-            capture_output=True, text=True, timeout=15,
+            capture_output=True,
+            text=True,
+            timeout=15,
         )
     except (OSError, subprocess.TimeoutExpired):
         return ""
@@ -190,7 +194,11 @@ def _git_status(cwd: Path) -> str:
 
 def _collect_context(cwd: Path, target_path: Path | None) -> str:
     helper = Path(__file__).resolve().parent / "collect_claude_context.py"
-    python = os.environ.get("SKILLS_PYTHON") or os.environ.get("CLAUDE_AUTOMATION_PYTHON") or sys.executable
+    python = (
+        os.environ.get("SKILLS_PYTHON")
+        or os.environ.get("CLAUDE_AUTOMATION_PYTHON")
+        or sys.executable
+    )
     cmd = [python, str(helper), "--cwd", str(cwd), "--format", "text"]
     if target_path is not None:
         cmd += ["--target-path", str(target_path)]
@@ -261,16 +269,12 @@ def _build_packet(
             start_line = window[0][0]
             end_line = window[-1][0]
             parts.append(f"\n### {path}\n")
-            parts.append(
-                f"_lines {start_line}-{end_line} of {total}; selection: {reason}_\n"
-            )
+            parts.append(f"_lines {start_line}-{end_line} of {total}; selection: {reason}_\n")
             parts.append("```")
             for line_no, content in window:
                 parts.append(f"{line_no:>5}: {content}")
             parts.append("```")
-            manifest.append(
-                f"{path}: lines {start_line}-{end_line}/{total} ({reason})"
-            )
+            manifest.append(f"{path}: lines {start_line}-{end_line}/{total} ({reason})")
 
     for path in skipped:
         manifest.append(f"{path}: skipped (max_files={max_files} exceeded)")

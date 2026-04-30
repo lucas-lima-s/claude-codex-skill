@@ -10,6 +10,7 @@ Run::
 
 Exit code is the number of failed assertions.
 """
+
 from __future__ import annotations
 
 import json
@@ -52,6 +53,7 @@ PYTHON = _resolve_python()
 
 
 # ----------------------------------------------------------------------- runner
+
 
 class Runner:
     def __init__(self) -> None:
@@ -110,8 +112,10 @@ class Runner:
 
 # ----------------------------------------------------------------------- helpers
 
-def _base_env(behavior: str = "success", timeout: str = "10",
-              extra: dict[str, str] | None = None) -> dict[str, str]:
+
+def _base_env(
+    behavior: str = "success", timeout: str = "10", extra: dict[str, str] | None = None
+) -> dict[str, str]:
     env = os.environ.copy()
     env["CODEX_WRAPPER_CODEX_OVERRIDE"] = str(FAKE)
     env["CODEX_WRAPPER_TIMEOUT_SECONDS"] = timeout
@@ -123,16 +127,27 @@ def _base_env(behavior: str = "success", timeout: str = "10",
     return env
 
 
-def _run_wrapper(mode: str, behavior: str, args: list[str],
-                 timeout_env: str = "10",
-                 extra_env: dict[str, str] | None = None,
-                 hard_timeout: float = 30.0) -> tuple[dict[str, Any], str, float]:
+def _run_wrapper(
+    mode: str,
+    behavior: str,
+    args: list[str],
+    timeout_env: str = "10",
+    extra_env: dict[str, str] | None = None,
+    hard_timeout: float = 30.0,
+) -> tuple[dict[str, Any], str, float]:
     """Returns (parsed_json_result, stderr, wall_clock_seconds)."""
     env = _base_env(behavior=behavior, timeout=timeout_env, extra=extra_env)
     cmd = [PYTHON, str(WRAPPER), mode] + args
     started = time.monotonic()
-    proc = subprocess.run(cmd, env=env, capture_output=True, text=True,
-                          encoding="utf-8", errors="replace", timeout=hard_timeout)
+    proc = subprocess.run(
+        cmd,
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=hard_timeout,
+    )
     elapsed = time.monotonic() - started
     try:
         result = json.loads(proc.stdout or "{}")
@@ -151,6 +166,7 @@ def _tempdir():
 
 
 # ----------------------------------------------------------------------- tests
+
 
 def test_plan_review_modes(r: Runner) -> None:
     r.section("plan-review × scenarios")
@@ -173,8 +189,11 @@ def test_plan_review_modes(r: Runner) -> None:
         # invalid_json → retry → still error after retry
         result, _, _ = _run_wrapper("plan-review", "invalid_json", common)
         r.eq(result.get("status"), "error", "plan-review/invalid_json status=error")
-        r.in_("structured json", (result.get("summary") or "").lower(),
-              "plan-review/invalid_json summary mentions JSON")
+        r.in_(
+            "structured json",
+            (result.get("summary") or "").lower(),
+            "plan-review/invalid_json summary mentions JSON",
+        )
 
         # partial → degraded best-effort
         result, _, _ = _run_wrapper("plan-review", "partial", common)
@@ -184,31 +203,41 @@ def test_plan_review_modes(r: Runner) -> None:
         # nonzero exit
         result, _, _ = _run_wrapper("plan-review", "nonzero", common)
         r.eq(result.get("status"), "error", "plan-review/nonzero status=error")
-        r.in_("non-zero status (2)", result.get("summary", ""),
-              "plan-review/nonzero summary mentions exit 2")
+        r.in_(
+            "non-zero status (2)",
+            result.get("summary", ""),
+            "plan-review/nonzero summary mentions exit 2",
+        )
 
         # needs_input
         result, _, _ = _run_wrapper("plan-review", "needs_input", common)
         r.eq(result.get("status"), "needs_input", "plan-review/needs_input status=needs_input")
         questions = result.get("questions", [])
         r.eq(len(questions), 1, "plan-review/needs_input 1 question")
-        r.in_("staging", questions[0].get("context", "").lower(),
-              "plan-review/needs_input context preserved")
+        r.in_(
+            "staging",
+            questions[0].get("context", "").lower(),
+            "plan-review/needs_input context preserved",
+        )
 
         # noisy stderr does not break stdout JSON (wrapper consumes child stderr,
         # so we only check that stdout JSON was unaffected by 50 stderr lines)
         result, _, _ = _run_wrapper("plan-review", "noisy_stderr", common)
         r.eq(result.get("status"), "ok", "plan-review/noisy_stderr status=ok")
-        r.eq(len(result.get("findings", [])), 1,
-             "plan-review/noisy_stderr stdout JSON intact despite stderr noise")
+        r.eq(
+            len(result.get("findings", [])),
+            1,
+            "plan-review/noisy_stderr stdout JSON intact despite stderr noise",
+        )
 
         # timeout
-        result, _, elapsed = _run_wrapper(
-            "plan-review", "timeout", common, timeout_env="2"
-        )
+        result, _, elapsed = _run_wrapper("plan-review", "timeout", common, timeout_env="2")
         r.eq(result.get("status"), "error", "plan-review/timeout status=error")
-        r.in_("timeout", result.get("summary", "").lower(),
-              "plan-review/timeout summary mentions timeout")
+        r.in_(
+            "timeout",
+            result.get("summary", "").lower(),
+            "plan-review/timeout summary mentions timeout",
+        )
         r.le(elapsed, 6.0, "plan-review/timeout returns <=6s")
 
 
@@ -216,13 +245,18 @@ def test_verify_mode(r: Runner) -> None:
     r.section("verify × scenarios")
     with _tempdir() as tmp:
         payload = tmp / "payload.json"
-        payload.write_text(json.dumps({
-            "cwd": str(SKILL_DIR),
-            "last_assistant_message": "Refactored normalize_codex_result.py",
-            "git_status_short": " M scripts/normalize_codex_result.py",
-            "git_diff_worktree": "diff --git a/x b/x\n@@ -1 +1,2 @@\n+new line\n",
-            "git_diff_cached": "",
-        }), encoding="utf-8")
+        payload.write_text(
+            json.dumps(
+                {
+                    "cwd": str(SKILL_DIR),
+                    "last_assistant_message": "Refactored normalize_codex_result.py",
+                    "git_status_short": " M scripts/normalize_codex_result.py",
+                    "git_diff_worktree": "diff --git a/x b/x\n@@ -1 +1,2 @@\n+new line\n",
+                    "git_diff_cached": "",
+                }
+            ),
+            encoding="utf-8",
+        )
         common = ["--cwd", str(SKILL_DIR), "--payload-file", str(payload)]
 
         result, _, _ = _run_wrapper("verify", "success", common)
@@ -269,12 +303,21 @@ def test_delegate_mode(r: Runner) -> None:
         result, _, _ = _run_wrapper("delegate", "delegate_ok", common)
         r.eq(result.get("status"), "ok", "delegate/delegate_ok status=ok")
         r.eq(result.get("mode"), "delegate", "delegate/delegate_ok mode")
-        r.eq(result.get("files_created"), ["fake/new.txt"],
-             "delegate/delegate_ok files_created passed through")
-        r.eq(result.get("files_edited"), ["fake/touched.py"],
-             "delegate/delegate_ok files_edited passed through")
-        r.eq(result.get("commands_run"), ["echo fake"],
-             "delegate/delegate_ok commands_run passed through")
+        r.eq(
+            result.get("files_created"),
+            ["fake/new.txt"],
+            "delegate/delegate_ok files_created passed through",
+        )
+        r.eq(
+            result.get("files_edited"),
+            ["fake/touched.py"],
+            "delegate/delegate_ok files_edited passed through",
+        )
+        r.eq(
+            result.get("commands_run"),
+            ["echo fake"],
+            "delegate/delegate_ok commands_run passed through",
+        )
 
         # delegate accepts prose (no JSON) without erroring
         result, _, _ = _run_wrapper("delegate", "invalid_json", common)
@@ -298,32 +341,51 @@ def test_review_packet_window(r: Runner) -> None:
         plan.write_text("Refactor src/huge.py:200 carefully.\n", encoding="utf-8")
         out = tmp / "packet.md"
         proc = subprocess.run(
-            [PYTHON, str(BUILDER),
-             "--plan-file", str(plan),
-             "--cwd", str(tmp),
-             "--output", str(out)],
-            capture_output=True, text=True, timeout=15,
+            [
+                PYTHON,
+                str(BUILDER),
+                "--plan-file",
+                str(plan),
+                "--cwd",
+                str(tmp),
+                "--output",
+                str(out),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=15,
         )
         r.eq(proc.returncode, 0, "builder exit=0 (with line citation)")
         body = out.read_text(encoding="utf-8")
-        r.in_("window around line 200", body,
-              "packet picks ±50 window when line cited and file >max_lines")
+        r.in_(
+            "window around line 200",
+            body,
+            "packet picks ±50 window when line cited and file >max_lines",
+        )
 
         # Plan without :line on a >max_lines file → first N lines
         plan2 = tmp / "plan2.md"
         plan2.write_text("Touch src/huge.py.\n", encoding="utf-8")
         out2 = tmp / "packet2.md"
         subprocess.run(
-            [PYTHON, str(BUILDER),
-             "--plan-file", str(plan2),
-             "--cwd", str(tmp),
-             "--max-lines", "50",
-             "--output", str(out2)],
-            capture_output=True, text=True, timeout=15,
+            [
+                PYTHON,
+                str(BUILDER),
+                "--plan-file",
+                str(plan2),
+                "--cwd",
+                str(tmp),
+                "--max-lines",
+                "50",
+                "--output",
+                str(out2),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=15,
         )
         body2 = out2.read_text(encoding="utf-8")
-        r.in_("first 50 lines", body2,
-              "packet picks first N lines when no :line cited")
+        r.in_("first 50 lines", body2, "packet picks first N lines when no :line cited")
 
         # File <= max_lines: full file mode
         small = big_dir / "small.py"
@@ -332,15 +394,22 @@ def test_review_packet_window(r: Runner) -> None:
         plan3.write_text("Touch src/small.py:5 quickly.\n", encoding="utf-8")
         out3 = tmp / "packet3.md"
         subprocess.run(
-            [PYTHON, str(BUILDER),
-             "--plan-file", str(plan3),
-             "--cwd", str(tmp),
-             "--output", str(out3)],
-            capture_output=True, text=True, timeout=15,
+            [
+                PYTHON,
+                str(BUILDER),
+                "--plan-file",
+                str(plan3),
+                "--cwd",
+                str(tmp),
+                "--output",
+                str(out3),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=15,
         )
         body3 = out3.read_text(encoding="utf-8")
-        r.in_("full file", body3,
-              "packet uses full file when total <= max_lines")
+        r.in_("full file", body3, "packet uses full file when total <= max_lines")
 
 
 def test_review_packet_max_files(r: Runner) -> None:
@@ -357,22 +426,32 @@ def test_review_packet_max_files(r: Runner) -> None:
 
         plan = tmp / "plan.md"
         plan.write_text(
-            "# plan\nTouch the following files:\n"
-            + "\n".join(f"- {c}" for c in cited),
+            "# plan\nTouch the following files:\n" + "\n".join(f"- {c}" for c in cited),
             encoding="utf-8",
         )
         out = tmp / "packet.md"
         subprocess.run(
-            [PYTHON, str(BUILDER),
-             "--plan-file", str(plan),
-             "--cwd", str(tmp),
-             "--max-files", "12",
-             "--output", str(out)],
-            capture_output=True, text=True, timeout=15,
+            [
+                PYTHON,
+                str(BUILDER),
+                "--plan-file",
+                str(plan),
+                "--cwd",
+                str(tmp),
+                "--max-files",
+                "12",
+                "--output",
+                str(out),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=15,
         )
         body = out.read_text(encoding="utf-8")
         # 12 should be included, 2 should be skipped with manifest entries.
-        included_count = sum(1 for c in cited if f"### {tmp.resolve()}" in body and c.replace("/", os.sep) in body)
+        included_count = sum(
+            1 for c in cited if f"### {tmp.resolve()}" in body and c.replace("/", os.sep) in body
+        )
         skipped_count = body.count("skipped (max_files=12 exceeded)")
         r.eq(skipped_count, 2, "packet skips exactly 2 files when 14 cited")
         # Loose includes check (resolved path may differ on Windows)
@@ -383,22 +462,29 @@ def test_review_packet_byte_truncation(r: Runner) -> None:
     r.section("build_review_packet × byte truncation")
     with _tempdir() as tmp:
         big = tmp / "big.py"
-        big.write_text("\n".join(f"# line {i:04d}" for i in range(2000)),
-                       encoding="utf-8")
+        big.write_text("\n".join(f"# line {i:04d}" for i in range(2000)), encoding="utf-8")
         plan = tmp / "plan.md"
         plan.write_text("Touch big.py thoroughly.\n", encoding="utf-8")
         out = tmp / "packet.md"
         subprocess.run(
-            [PYTHON, str(BUILDER),
-             "--plan-file", str(plan),
-             "--cwd", str(tmp),
-             "--max-bytes", "2048",
-             "--output", str(out)],
-            capture_output=True, text=True, timeout=15,
+            [
+                PYTHON,
+                str(BUILDER),
+                "--plan-file",
+                str(plan),
+                "--cwd",
+                str(tmp),
+                "--max-bytes",
+                "2048",
+                "--output",
+                str(out),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=15,
         )
         body = out.read_text(encoding="utf-8")
-        r.in_("packet truncated", body,
-              "packet truncates body when max_bytes exceeded")
+        r.in_("packet truncated", body, "packet truncates body when max_bytes exceeded")
 
 
 def test_review_packet_empty_plan(r: Runner) -> None:
@@ -408,11 +494,19 @@ def test_review_packet_empty_plan(r: Runner) -> None:
         plan.write_text("   \n", encoding="utf-8")
         out = tmp / "packet.md"
         proc = subprocess.run(
-            [PYTHON, str(BUILDER),
-             "--plan-file", str(plan),
-             "--cwd", str(tmp),
-             "--output", str(out)],
-            capture_output=True, text=True, timeout=15,
+            [
+                PYTHON,
+                str(BUILDER),
+                "--plan-file",
+                str(plan),
+                "--cwd",
+                str(tmp),
+                "--output",
+                str(out),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=15,
         )
         r.eq(proc.returncode, 2, "empty plan → builder returns 2")
 
@@ -427,8 +521,7 @@ def test_wrapper_auto_packet(r: Runner) -> None:
         )
         common = ["--cwd", str(SKILL_DIR), "--last-message-file", str(plan)]
         result, _, _ = _run_wrapper("plan-review", "success", common)
-        r.eq(result.get("status"), "ok",
-             "wrapper plan-review with auto-packet returns ok")
+        r.eq(result.get("status"), "ok", "wrapper plan-review with auto-packet returns ok")
 
 
 def test_batch_ask_speedup(r: Runner) -> None:
@@ -450,9 +543,18 @@ def test_batch_ask_speedup(r: Runner) -> None:
         t0 = time.monotonic()
         for _ in range(4):
             subprocess.run(
-                [PYTHON, str(WRAPPER), "ask", "--cwd", str(SKILL_DIR),
-                 "--question-file", str(batch_file)],
-                env=env, capture_output=True, timeout=30,
+                [
+                    PYTHON,
+                    str(WRAPPER),
+                    "ask",
+                    "--cwd",
+                    str(SKILL_DIR),
+                    "--question-file",
+                    str(batch_file),
+                ],
+                env=env,
+                capture_output=True,
+                timeout=30,
             )
         seq = time.monotonic() - t0
 
@@ -460,7 +562,10 @@ def test_batch_ask_speedup(r: Runner) -> None:
         t0 = time.monotonic()
         proc = subprocess.run(
             [PYTHON, str(BATCHER), "batch-ask", "--input-file", str(batch_file)],
-            env=env, capture_output=True, text=True, timeout=60,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=60,
         )
         par = time.monotonic() - t0
 
@@ -493,7 +598,10 @@ def test_batch_ask_partial(r: Runner) -> None:
         env = _base_env(behavior="success")
         proc = subprocess.run(
             [PYTHON, str(BATCHER), "batch-ask", "--input-file", str(path)],
-            env=env, capture_output=True, text=True, timeout=60,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=60,
         )
         result = json.loads(proc.stdout)
         r.eq(result.get("status"), "ok", "batch-ask 3/3 ok aggregate")
@@ -504,11 +612,13 @@ def test_batch_ask_partial(r: Runner) -> None:
         env_fail = _base_env(behavior="nonzero")
         proc = subprocess.run(
             [PYTHON, str(BATCHER), "batch-ask", "--input-file", str(path)],
-            env=env_fail, capture_output=True, text=True, timeout=60,
+            env=env_fail,
+            capture_output=True,
+            text=True,
+            timeout=60,
         )
         result = json.loads(proc.stdout)
-        r.eq(result.get("status"), "error",
-             "batch-ask all-fail aggregate=error")
+        r.eq(result.get("status"), "error", "batch-ask all-fail aggregate=error")
 
 
 def test_batch_delegate_overlap(r: Runner) -> None:
@@ -516,10 +626,18 @@ def test_batch_delegate_overlap(r: Runner) -> None:
     with _tempdir() as tmp:
         batch = {
             "tasks": [
-                {"id": "t1", "task": "x", "cwd": str(SKILL_DIR),
-                 "write_set": ["src/a.py", "src/shared.py"]},
-                {"id": "t2", "task": "y", "cwd": str(SKILL_DIR),
-                 "write_set": ["src/b.py", "src/shared.py"]},
+                {
+                    "id": "t1",
+                    "task": "x",
+                    "cwd": str(SKILL_DIR),
+                    "write_set": ["src/a.py", "src/shared.py"],
+                },
+                {
+                    "id": "t2",
+                    "task": "y",
+                    "cwd": str(SKILL_DIR),
+                    "write_set": ["src/b.py", "src/shared.py"],
+                },
             ],
         }
         path = tmp / "ov.json"
@@ -527,11 +645,13 @@ def test_batch_delegate_overlap(r: Runner) -> None:
         env = _base_env(behavior="delegate_ok")
         proc = subprocess.run(
             [PYTHON, str(BATCHER), "batch-delegate", "--input-file", str(path)],
-            env=env, capture_output=True, text=True, timeout=30,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
         result = json.loads(proc.stdout)
-        r.eq(result.get("status"), "error",
-             "batch-delegate overlap aggregate=error")
+        r.eq(result.get("status"), "error", "batch-delegate overlap aggregate=error")
         overlaps = result.get("overlaps") or []
         r.ge(len(overlaps), 1, "overlap descriptor present")
         r.in_("shared.py", str(overlaps), "overlap path identified")
@@ -542,10 +662,8 @@ def test_batch_delegate_violation(r: Runner) -> None:
     with _tempdir() as tmp:
         batch = {
             "tasks": [
-                {"id": "d1", "task": "x", "cwd": str(SKILL_DIR),
-                 "write_set": ["src/a.py"]},
-                {"id": "d2", "task": "y", "cwd": str(SKILL_DIR),
-                 "write_set": ["src/b.py"]},
+                {"id": "d1", "task": "x", "cwd": str(SKILL_DIR), "write_set": ["src/a.py"]},
+                {"id": "d2", "task": "y", "cwd": str(SKILL_DIR), "write_set": ["src/b.py"]},
             ],
         }
         path = tmp / "dj.json"
@@ -553,7 +671,10 @@ def test_batch_delegate_violation(r: Runner) -> None:
         env = _base_env(behavior="delegate_ok")
         proc = subprocess.run(
             [PYTHON, str(BATCHER), "batch-delegate", "--input-file", str(path)],
-            env=env, capture_output=True, text=True, timeout=60,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=60,
         )
         result = json.loads(proc.stdout)
         r.eq(result.get("status"), "ok", "batch-delegate disjoint runs ok")
@@ -583,9 +704,19 @@ def test_telemetry_schema(r: Runner) -> None:
 
     last_line = new_text.strip().splitlines()[-1]
     entry = json.loads(last_line)
-    required = {"schema_version", "timestamp", "run_id", "mode", "cwd",
-                "duration_ms", "status", "packet_bytes", "retry_count",
-                "error_class", "exit_code"}
+    required = {
+        "schema_version",
+        "timestamp",
+        "run_id",
+        "mode",
+        "cwd",
+        "duration_ms",
+        "status",
+        "packet_bytes",
+        "retry_count",
+        "error_class",
+        "exit_code",
+    }
     missing = required - set(entry.keys())
     r.eq(missing, set(), f"telemetry has all required fields ({sorted(required)})")
     r.eq(entry["mode"], "plan-review", "telemetry: mode field correct")
@@ -612,10 +743,8 @@ def test_telemetry_rotation(r: Runner) -> None:
         _run_wrapper("plan-review", "success", common)
 
     r.truthy(backup.exists(), "rotation: runs.jsonl.1 created")
-    r.le(runs.stat().st_size, 5 * 1024 * 1024,
-         "rotation: runs.jsonl below 5 MB after rotation")
-    r.ge(backup.stat().st_size, 5 * 1024 * 1024,
-         "rotation: runs.jsonl.1 holds the old payload")
+    r.le(runs.stat().st_size, 5 * 1024 * 1024, "rotation: runs.jsonl below 5 MB after rotation")
+    r.ge(backup.stat().st_size, 5 * 1024 * 1024, "rotation: runs.jsonl.1 holds the old payload")
 
 
 def test_ps1_stub(r: Runner) -> None:
@@ -633,11 +762,25 @@ def test_ps1_stub(r: Runner) -> None:
         plan.write_text("ps1 stub test\n", encoding="utf-8")
         env = _base_env(behavior="success")
         cmd = [
-            pwsh, "-NoProfile", "-File", str(PS1),
-            "plan-review", "--cwd", str(SKILL_DIR), "--last-message-file", str(plan),
+            pwsh,
+            "-NoProfile",
+            "-File",
+            str(PS1),
+            "plan-review",
+            "--cwd",
+            str(SKILL_DIR),
+            "--last-message-file",
+            str(plan),
         ]
-        proc = subprocess.run(cmd, env=env, capture_output=True, text=True,
-                              encoding="utf-8", errors="replace", timeout=30)
+        proc = subprocess.run(
+            cmd,
+            env=env,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+        )
         try:
             data = json.loads(proc.stdout)
         except json.JSONDecodeError:
@@ -659,42 +802,48 @@ def test_codex_config(r: Runner) -> None:
     try:
         # get() — settings core
         cc.clear_cache()
-        r.eq(cc.get("dialogue.default_max_turns"), 3,
-             "get(dialogue.default_max_turns) == 3")
-        r.eq(cc.get("background.default_max_concurrent"), 5,
-             "get(background.default_max_concurrent) == 5")
-        r.eq(cc.get("foo.bar.does.not.exist", default="N/A"), "N/A",
-             "get(missing) returns default")
+        r.eq(cc.get("dialogue.default_max_turns"), 3, "get(dialogue.default_max_turns) == 3")
+        r.eq(
+            cc.get("background.default_max_concurrent"),
+            5,
+            "get(background.default_max_concurrent) == 5",
+        )
+        r.eq(cc.get("foo.bar.does.not.exist", default="N/A"), "N/A", "get(missing) returns default")
 
         # t() — pt-BR direct lookup
         os.environ["CODEX_LOCALE"] = "pt-BR"
         cc.clear_cache()
-        r.in_("não retornou JSON estruturado",
-              cc.t("normalize.summary.not_structured"),
-              "t pt-BR resolves normalize key")
-        r.in_("Timeout", cc.t("wrapper.error.timeout", timeout=30.0),
-              "t pt-BR resolves with kwargs")
+        r.in_(
+            "não retornou JSON estruturado",
+            cc.t("normalize.summary.not_structured"),
+            "t pt-BR resolves normalize key",
+        )
+        r.in_(
+            "Timeout", cc.t("wrapper.error.timeout", timeout=30.0), "t pt-BR resolves with kwargs"
+        )
 
         # t() — en-US direct lookup
         os.environ["CODEX_LOCALE"] = "en-US"
         cc.clear_cache()
-        r.in_("did not return structured JSON",
-              cc.t("normalize.summary.not_structured"),
-              "t en-US resolves normalize key")
-        r.in_("Codex timeout after",
-              cc.t("wrapper.error.timeout", timeout=30.0),
-              "t en-US resolves with kwargs")
+        r.in_(
+            "did not return structured JSON",
+            cc.t("normalize.summary.not_structured"),
+            "t en-US resolves normalize key",
+        )
+        r.in_(
+            "Codex timeout after",
+            cc.t("wrapper.error.timeout", timeout=30.0),
+            "t en-US resolves with kwargs",
+        )
 
         # t() — chave inexistente cai no literal
         cc.clear_cache()
-        r.eq(cc.t("foo.bar.baz"), "foo.bar.baz",
-             "t missing key falls back to literal key")
+        r.eq(cc.t("foo.bar.baz"), "foo.bar.baz", "t missing key falls back to literal key")
 
         # detect_locale com env var
         os.environ["CODEX_LOCALE"] = "pt_BR"  # underscore
         cc.clear_cache()
-        r.eq(cc.detect_locale(), "pt-BR",
-             "detect_locale normalises pt_BR → pt-BR")
+        r.eq(cc.detect_locale(), "pt-BR", "detect_locale normalises pt_BR → pt-BR")
 
         # override via config.local.json
         os.environ.pop("CODEX_LOCALE", None)
@@ -702,17 +851,20 @@ def test_codex_config(r: Runner) -> None:
         local_existed = local_path.exists()
         backup = local_path.read_text(encoding="utf-8") if local_existed else None
         try:
-            local_path.write_text(json.dumps({
-                "settings": {"dialogue": {"default_max_turns": 999}},
-                "locales": {"pt-BR": {"foo.test": "VALOR LOCAL pt-BR"}},
-            }), encoding="utf-8")
+            local_path.write_text(
+                json.dumps(
+                    {
+                        "settings": {"dialogue": {"default_max_turns": 999}},
+                        "locales": {"pt-BR": {"foo.test": "VALOR LOCAL pt-BR"}},
+                    }
+                ),
+                encoding="utf-8",
+            )
             cc.clear_cache()
-            r.eq(cc.get("dialogue.default_max_turns"), 999,
-                 "config.local.json override settings")
+            r.eq(cc.get("dialogue.default_max_turns"), 999, "config.local.json override settings")
             os.environ["CODEX_LOCALE"] = "pt-BR"
             cc.clear_cache()
-            r.eq(cc.t("foo.test"), "VALOR LOCAL pt-BR",
-                 "config.local.json adds locale entries")
+            r.eq(cc.t("foo.test"), "VALOR LOCAL pt-BR", "config.local.json adds locale entries")
             # Chave existente no default + override deve mostrar override
             os.environ["CODEX_LOCALE"] = "pt-BR"
         finally:
@@ -735,11 +887,12 @@ def test_disable_heartbeat_silent(r: Runner) -> None:
         plan.write_text("hb test\n", encoding="utf-8")
         common = ["--cwd", str(SKILL_DIR), "--last-message-file", str(plan)]
         _, stderr, _ = _run_wrapper(
-            "plan-review", "delay_short", common,
+            "plan-review",
+            "delay_short",
+            common,
             extra_env={"CODEX_WRAPPER_DISABLE_HEARTBEAT": "1"},
         )
-        r.falsy("[codex-heartbeat]" in stderr,
-                "heartbeat suppressed when env=1")
+        r.falsy("[codex-heartbeat]" in stderr, "heartbeat suppressed when env=1")
 
 
 def test_analyze_plan_complexity(r: Runner) -> None:
@@ -755,7 +908,11 @@ def test_analyze_plan_complexity(r: Runner) -> None:
         simple.write_text("# Plan\n\nTouch scripts/foo.py for something.\n", encoding="utf-8")
         proc = subprocess.run(
             [PYTHON, str(helper), "--plan-file", str(simple)],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=10,
         )
         try:
             data = json.loads(proc.stdout)
@@ -766,7 +923,9 @@ def test_analyze_plan_complexity(r: Runner) -> None:
 
         # Case 2: sensitive plan (cross-module + keywords + 3 phases + large)
         sensitive_lines = ["# Sensitive plan", ""]
-        sensitive_lines.append("Refactor de auth, payment e migration. Toca `handler/`, `service/`, `repo/` e `api/`.")
+        sensitive_lines.append(
+            "Refactor de auth, payment e migration. Toca `handler/`, `service/`, `repo/` e `api/`."
+        )
         for n in range(1, 4):
             sensitive_lines.append(f"## Phase {n}")
             for f_idx in range(8):
@@ -777,31 +936,42 @@ def test_analyze_plan_complexity(r: Runner) -> None:
         sensitive.write_text(sensitive_text, encoding="utf-8")
         proc = subprocess.run(
             [PYTHON, str(helper), "--plan-file", str(sensitive)],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=10,
         )
         try:
             data = json.loads(proc.stdout)
         except json.JSONDecodeError:
             data = {}
-        r.eq(data.get("suggest_iterative"), True,
-             "sensitive plan → suggest_iterative=true")
+        r.eq(data.get("suggest_iterative"), True, "sensitive plan → suggest_iterative=true")
         r.truthy((data.get("score") or 0) >= 3, "sensitive plan → score >= 3")
         reasons = data.get("reasons") or []
-        r.truthy(any("keywords" in (rs or "") for rs in reasons),
-                 "reasons mention sensitive keywords")
+        r.truthy(
+            any("keywords" in (rs or "") for rs in reasons), "reasons mention sensitive keywords"
+        )
 
         # Case 3: missing file → fails gracefully
         missing = tmp / "does_not_exist.md"
         proc = subprocess.run(
             [PYTHON, str(helper), "--plan-file", str(missing)],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=10,
         )
         try:
             data = json.loads(proc.stdout)
         except json.JSONDecodeError:
             data = {}
-        r.eq(data.get("suggest_iterative"), False,
-             "missing file → suggest_iterative=false (graceful)")
+        r.eq(
+            data.get("suggest_iterative"),
+            False,
+            "missing file → suggest_iterative=false (graceful)",
+        )
         r.eq(data.get("score") or 0, 0, "missing file → score 0")
 
 
@@ -820,20 +990,44 @@ def test_dialogue_lifecycle(r: Runner) -> None:
         # start sem --accepted-by-user → recusa
         proc = subprocess.run(
             [PYTHON, str(dialogue), "start", "--plan-file", str(plan), "--cwd", str(SKILL_DIR)],
-            env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
+            env=env,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=10,
         )
         try:
             data = json.loads(proc.stdout)
         except json.JSONDecodeError:
             data = {}
         r.eq(data.get("status"), "error", "start without --accepted-by-user → status=error")
-        r.eq(data.get("reason"), "needs_user_acceptance",
-             "reason=needs_user_acceptance (guard rail R5-F1)")
+        r.eq(
+            data.get("reason"),
+            "needs_user_acceptance",
+            "reason=needs_user_acceptance (guard rail R5-F1)",
+        )
 
         # start
         proc = subprocess.run(
-            [PYTHON, str(dialogue), "start", "--accepted-by-user", "--plan-file", str(plan), "--cwd", str(SKILL_DIR), "--max-turns", "2"],
-            env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
+            [
+                PYTHON,
+                str(dialogue),
+                "start",
+                "--accepted-by-user",
+                "--plan-file",
+                str(plan),
+                "--cwd",
+                str(SKILL_DIR),
+                "--max-turns",
+                "2",
+            ],
+            env=env,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=60,
         )
         try:
             data = json.loads(proc.stdout)
@@ -851,7 +1045,12 @@ def test_dialogue_lifecycle(r: Runner) -> None:
         # status mid-flight
         proc = subprocess.run(
             [PYTHON, str(dialogue), "status", "--dialogue-id", dialogue_id],
-            env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
+            env=env,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=10,
         )
         try:
             data = json.loads(proc.stdout)
@@ -864,21 +1063,38 @@ def test_dialogue_lifecycle(r: Runner) -> None:
         plan_v2 = tmp / "plan_v2.md"
         plan_v2.write_text("# Plan v2\nRevised version.\n", encoding="utf-8")
         proc = subprocess.run(
-            [PYTHON, str(dialogue), "next-turn", "--dialogue-id", dialogue_id, "--plan-file", str(plan_v2)],
-            env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
+            [
+                PYTHON,
+                str(dialogue),
+                "next-turn",
+                "--dialogue-id",
+                dialogue_id,
+                "--plan-file",
+                str(plan_v2),
+            ],
+            env=env,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=60,
         )
         try:
             data = json.loads(proc.stdout)
         except json.JSONDecodeError:
             data = {}
         r.eq(data.get("turn"), 2, "next-turn returns turn=2")
-        r.eq(data.get("stop_reason"), "limit",
-             "stop_reason=limit when current_turn == max_turns")
+        r.eq(data.get("stop_reason"), "limit", "stop_reason=limit when current_turn == max_turns")
 
         # finish
         proc = subprocess.run(
             [PYTHON, str(dialogue), "finish", "--dialogue-id", dialogue_id],
-            env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
+            env=env,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=10,
         )
         try:
             data = json.loads(proc.stdout)
@@ -895,8 +1111,23 @@ def test_dialogue_lifecycle(r: Runner) -> None:
         plan2 = tmp / "abort_plan.md"
         plan2.write_text("# Plan to abort\n", encoding="utf-8")
         proc = subprocess.run(
-            [PYTHON, str(dialogue), "start", "--plan-file", str(plan2), "--cwd", str(SKILL_DIR), "--max-turns", "5"],
-            env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
+            [
+                PYTHON,
+                str(dialogue),
+                "start",
+                "--plan-file",
+                str(plan2),
+                "--cwd",
+                str(SKILL_DIR),
+                "--max-turns",
+                "5",
+            ],
+            env=env,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=60,
         )
         try:
             data = json.loads(proc.stdout)
@@ -906,7 +1137,12 @@ def test_dialogue_lifecycle(r: Runner) -> None:
         if abort_id:
             proc = subprocess.run(
                 [PYTHON, str(dialogue), "abort", "--dialogue-id", abort_id],
-                env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
+                env=env,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=10,
             )
             try:
                 data = json.loads(proc.stdout)
@@ -917,7 +1153,12 @@ def test_dialogue_lifecycle(r: Runner) -> None:
             # stop_signal should reflect aborted
             proc = subprocess.run(
                 [PYTHON, str(dialogue), "status", "--dialogue-id", abort_id],
-                env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
+                env=env,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=10,
             )
             try:
                 data = json.loads(proc.stdout)
@@ -928,7 +1169,12 @@ def test_dialogue_lifecycle(r: Runner) -> None:
         # not_found error path
         proc = subprocess.run(
             [PYTHON, str(dialogue), "status", "--dialogue-id", "deadbeefcafe"],
-            env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
+            env=env,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=10,
         )
         try:
             data = json.loads(proc.stdout)
@@ -944,74 +1190,104 @@ def test_reasoning_effort_override(r: Runner) -> None:
         # Case 1: --reasoning-effort high in verify mode (default would be medium).
         # We confirm that the argv received by Codex contains model_reasoning_effort=high.
         payload = tmp / "payload.json"
-        payload.write_text(json.dumps({
-            "cwd": str(SKILL_DIR),
-            "last_assistant_message": "x",
-            "transcript_path": "",
-            "git_status_short": "",
-            "git_diff_worktree": "",
-            "git_diff_cached": "",
-            "changed_files_from_transcript": [],
-        }), encoding="utf-8")
+        payload.write_text(
+            json.dumps(
+                {
+                    "cwd": str(SKILL_DIR),
+                    "last_assistant_message": "x",
+                    "transcript_path": "",
+                    "git_status_short": "",
+                    "git_diff_worktree": "",
+                    "git_diff_cached": "",
+                    "changed_files_from_transcript": [],
+                }
+            ),
+            encoding="utf-8",
+        )
         argv_log = tmp / "argv.json"
         common = [
-            "--cwd", str(SKILL_DIR),
-            "--payload-file", str(payload),
-            "--reasoning-effort", "high",
+            "--cwd",
+            str(SKILL_DIR),
+            "--payload-file",
+            str(payload),
+            "--reasoning-effort",
+            "high",
         ]
         _run_wrapper(
-            "verify", "success", common,
+            "verify",
+            "success",
+            common,
             extra_env={"FAKE_CODEX_ARGV_LOG_FILE": str(argv_log)},
         )
         if argv_log.exists():
             argv = json.loads(argv_log.read_text(encoding="utf-8")).get("argv", [])
             argv_str = " ".join(argv)
-            r.in_("model_reasoning_effort=high", argv_str,
-                  "verify+--reasoning-effort high → high passed to Codex")
-            r.falsy("model_reasoning_effort=medium" in argv_str,
-                    "verify+--reasoning-effort high → medium NOT in argv")
+            r.in_(
+                "model_reasoning_effort=high",
+                argv_str,
+                "verify+--reasoning-effort high → high passed to Codex",
+            )
+            r.falsy(
+                "model_reasoning_effort=medium" in argv_str,
+                "verify+--reasoning-effort high → medium NOT in argv",
+            )
         else:
             r.fail("verify+--reasoning-effort high", "argv log not written")
 
         # Case 2: no --reasoning-effort in verify mode → keeps the medium default.
         argv_log_2 = tmp / "argv2.json"
         common_default = [
-            "--cwd", str(SKILL_DIR),
-            "--payload-file", str(payload),
+            "--cwd",
+            str(SKILL_DIR),
+            "--payload-file",
+            str(payload),
         ]
         _run_wrapper(
-            "verify", "success", common_default,
+            "verify",
+            "success",
+            common_default,
             extra_env={"FAKE_CODEX_ARGV_LOG_FILE": str(argv_log_2)},
         )
         if argv_log_2.exists():
             argv_str = " ".join(json.loads(argv_log_2.read_text(encoding="utf-8")).get("argv", []))
-            r.in_("model_reasoning_effort=medium", argv_str,
-                  "verify default → medium preserved (no regression)")
+            r.in_(
+                "model_reasoning_effort=medium",
+                argv_str,
+                "verify default → medium preserved (no regression)",
+            )
         else:
             r.fail("verify default", "argv log not written")
 
         # Case 3: invalid value emits a warning and falls back to the per-mode default.
         argv_log_3 = tmp / "argv3.json"
         common_invalid = [
-            "--cwd", str(SKILL_DIR),
-            "--payload-file", str(payload),
-            "--reasoning-effort", "ultraplus",
+            "--cwd",
+            str(SKILL_DIR),
+            "--payload-file",
+            str(payload),
+            "--reasoning-effort",
+            "ultraplus",
         ]
         _, stderr_3, _ = _run_wrapper(
-            "verify", "success", common_invalid,
+            "verify",
+            "success",
+            common_invalid,
             extra_env={"FAKE_CODEX_ARGV_LOG_FILE": str(argv_log_3)},
         )
         if argv_log_3.exists():
             argv_str = " ".join(json.loads(argv_log_3.read_text(encoding="utf-8")).get("argv", []))
-            r.in_("model_reasoning_effort=medium", argv_str,
-                  "invalid --reasoning-effort → falls back to per-mode default")
-            r.in_("ultraplus", stderr_3,
-                  "invalid --reasoning-effort → warning to stderr")
+            r.in_(
+                "model_reasoning_effort=medium",
+                argv_str,
+                "invalid --reasoning-effort → falls back to per-mode default",
+            )
+            r.in_("ultraplus", stderr_3, "invalid --reasoning-effort → warning to stderr")
         else:
             r.fail("verify+invalid effort", "argv log not written")
 
 
 # ----------------------------------------------------------------------- main
+
 
 def main() -> int:
     if not WRAPPER.exists():

@@ -14,6 +14,7 @@ preserving any other keys.
 All output goes to stderr (consistent with ``setup.py``); stdout stays
 silent so the caller can chain commands without parsing pollution.
 """
+
 from __future__ import annotations
 
 import argparse

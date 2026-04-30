@@ -19,6 +19,7 @@ with ``CODEX_WRAPPER_CODEX_OVERRIDE`` pointing here. Behavior is selected via
 We intentionally accept the same flag surface as the real Codex CLI so the
 wrapper can call us unchanged.
 """
+
 from __future__ import annotations
 
 import argparse
