@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "_doc": "Defaults da skill `codex`. Este arquivo é versionado. Para overrides locais (sem commitar), crie `config.local.json` na mesma pasta com as mesmas chaves; valores em `config.local.json` sobrescrevem este arquivo via deep-merge.",
+  "_doc": "Defaults for the `codex` skill. This file is versioned. For local overrides (without committing), create `config.local.json` in the same folder with the same keys; values in `config.local.json` override this file via deep-merge.",
 
   "settings": {
     "dialogue": {
