@@ -119,6 +119,66 @@ Locales supported out of the box: `pt-BR` (default) and `en-US`. To add
 a new locale, add a `locales.<code>` section in `config.local.json` (or
 open a PR to land it in the default).
 
+## Working with line endings & locale
+
+### Line endings
+
+A `.gitattributes` at the root pins the EOL convention so contributors on
+Linux, macOS, and Windows all get a clean `git status` after a fresh
+clone:
+
+- Default: `text=auto eol=lf` — every text file is normalised to LF in
+  the index and on checkout.
+- `*.ps1` and `*.bat` are pinned to CRLF — PowerShell and CMD expect
+  it.
+- `*.png` and `*.jpg` are flagged binary so git never tries to apply
+  EOL conversion.
+
+If `git status` shows EOL diffs immediately after a clone, your local
+`core.autocrlf` is overriding the repo's `.gitattributes`. Either set
+`core.autocrlf=false` or run `git add --renormalize .` and commit the
+result on a feature branch.
+
+### `config.local.json` is gitignored by design
+
+Per-user customisations (locale, credential propagate list, dialogue
+turn count, etc.) live in `config.local.json`. The file is in
+`.gitignore` so private tweaks never leak into a PR. The supported way
+to change the locale is the helper script:
+
+```sh
+"$SKILLS_PYTHON" scripts/set_locale.py --locale en-US
+```
+
+Hand-editing `config.local.json` is also fine — both paths persist the
+same key.
+
+### `CODEX_LOCALE` runtime override
+
+Set `CODEX_LOCALE` to override the locale for a single shell or single
+invocation, without touching `config.local.json`:
+
+```sh
+CODEX_LOCALE=en-US "$SKILLS_PYTHON" scripts/invoke_codex_with_claude.py ask --question-file q.txt
+```
+
+Codes with underscore (`pt_BR`) are normalised to hyphen (`pt-BR`).
+
+### Test suites are pinned to `en-US`
+
+The mocked suite (`tests/test_codex_skill.py`) and the live suite
+(`tests/test_codex_live.py`) both export `CODEX_LOCALE=en-US` from
+inside their helpers (`_base_env` and `_live_env`). This means:
+
+- The asserts compare against the en-US strings from
+  `config.default.json`, no matter what `config.local.json` says.
+- Running on a CI machine with no `config.local.json` works identically
+  to running on a developer machine that defaulted to pt-BR.
+- If you intentionally want to inspect the pt-BR prompts via the test
+  suite, run `set_locale.py --locale pt-BR` and then run the wrapper
+  manually — the test runner itself will keep using en-US, so its
+  asserts will still apply.
+
 ## Modes
 
 See `SKILL.md` for details. Summary:
