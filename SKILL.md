@@ -41,7 +41,7 @@ manually):
 **Natural-phrase → mode mapping** (trigger phrases stay in pt-BR for
 matching against Brazilian Portuguese speech):
 
-| User phrase (pt-BR) | Mode |
+| Trigger phrase (pt-BR) | Mode |
 |---|---|
 | "revise esse plano com o codex" / "revisa pelo codex" / "pede pro codex revisar" | `plan-review` |
 | "revisa iterativamente com o codex" / "abre uma discussão com o codex sobre esse plano" / "vai e volta com o codex até convergir" / "rodada multi-jogada com o codex" | `plan-review-iter` |
