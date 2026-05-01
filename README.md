@@ -107,8 +107,6 @@ such as:
 The skill is in real use. Open work is listed in
 [`ROADMAP.md`](ROADMAP.md):
 
-- Public-repo polish (CI, CHANGELOG, CONTRIBUTING, GitHub templates,
-  topics, `.gitattributes`).
 - Robust `codex exec --json` stream parser.
 - Review caching by packet fingerprint.
 - `repro` mode for replaying a `run_id`'s prompt + output.
