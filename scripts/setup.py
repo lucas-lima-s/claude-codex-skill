@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -105,6 +106,21 @@ def _persist_locale(chosen: str) -> None:
     codex_config._cached_locale = chosen
 
 
+MIN_CODEX_VERSION = "0.146.0"
+
+
+def _parse_codex_version(text: str) -> tuple[int, ...]:
+    """Extract a comparable version tuple from ``codex-cli 0.147.0``.
+
+    Returns an empty tuple when nothing version-shaped is present, which
+    the caller treats as "cannot tell" rather than "too old".
+    """
+    match = re.search(r"(\d+)\.(\d+)\.(\d+)", text or "")
+    if not match:
+        return ()
+    return tuple(int(part) for part in match.groups())
+
+
 def _validate_codex_cli() -> None:
     codex_path = shutil.which("codex")
     if not codex_path:
@@ -123,6 +139,16 @@ def _validate_codex_cli() -> None:
     version_lines = (proc.stdout or proc.stderr or "").strip().splitlines()
     version_str = version_lines[0] if version_lines else "unknown"
     say(codex_config.t("setup.validation.codex_ok", version=version_str))
+    parsed = _parse_codex_version(version_str)
+    minimum = _parse_codex_version(MIN_CODEX_VERSION)
+    if parsed and parsed < minimum:
+        say(
+            codex_config.t(
+                "setup.validation.codex_outdated",
+                version=version_str,
+                minimum=MIN_CODEX_VERSION,
+            )
+        )
 
 
 def _validate_python() -> None:

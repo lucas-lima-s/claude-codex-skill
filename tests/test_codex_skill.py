@@ -113,6 +113,9 @@ class Runner:
 # ----------------------------------------------------------------------- helpers
 
 
+TELEMETRY_SANDBOX = Path(tempfile.mkdtemp(prefix="codex-test-cache-"))
+
+
 def _base_env(behavior: str = "success", timeout: str = "10", extra: dict[str, str] | None = None) -> dict[str, str]:
     env = os.environ.copy()
     env["CODEX_WRAPPER_CODEX_OVERRIDE"] = str(FAKE)
@@ -120,6 +123,7 @@ def _base_env(behavior: str = "success", timeout: str = "10", extra: dict[str, s
     env["CODEX_WRAPPER_DISABLE_HEARTBEAT"] = "1"
     env["FAKE_CODEX_BEHAVIOR"] = behavior
     env["CODEX_LOCALE"] = "en-US"
+    env["CODEX_WRAPPER_CACHE_DIR"] = str(TELEMETRY_SANDBOX)
     if extra:
         env.update(extra)
     return env
@@ -677,7 +681,7 @@ def test_batch_delegate_violation(r: Runner) -> None:
 
 def test_telemetry_schema(r: Runner) -> None:
     r.section("telemetry × schema and write")
-    cache_dir = SKILL_DIR / "cache"
+    cache_dir = TELEMETRY_SANDBOX
     cache_dir.mkdir(exist_ok=True)
     runs = cache_dir / "runs.jsonl"
     # Snapshot
@@ -718,25 +722,26 @@ def test_telemetry_schema(r: Runner) -> None:
 
 def test_telemetry_rotation(r: Runner) -> None:
     r.section("telemetry × rotation at 5 MB")
-    cache_dir = SKILL_DIR / "cache"
-    cache_dir.mkdir(exist_ok=True)
-    runs = cache_dir / "runs.jsonl"
-    backup = cache_dir / "runs.jsonl.1"
-
-    # Pre-fill above 5 MB
-    runs.write_bytes(b"x" * (5 * 1024 * 1024 + 100))
-    if backup.exists():
-        backup.unlink()
-
     with _tempdir() as tmp:
+        cache_dir = tmp / "cache"
+        cache_dir.mkdir()
+        runs = cache_dir / "runs.jsonl"
+        backup = cache_dir / "runs.jsonl.1"
+        runs.write_bytes(b"x" * (5 * 1024 * 1024 + 100))
+
         plan = tmp / "p.md"
         plan.write_text("rot\n", encoding="utf-8")
         common = ["--cwd", str(SKILL_DIR), "--last-message-file", str(plan)]
-        _run_wrapper("plan-review", "success", common)
+        _run_wrapper(
+            "plan-review",
+            "success",
+            common,
+            extra_env={"CODEX_WRAPPER_CACHE_DIR": str(cache_dir)},
+        )
 
-    r.truthy(backup.exists(), "rotation: runs.jsonl.1 created")
-    r.le(runs.stat().st_size, 5 * 1024 * 1024, "rotation: runs.jsonl below 5 MB after rotation")
-    r.ge(backup.stat().st_size, 5 * 1024 * 1024, "rotation: runs.jsonl.1 holds the old payload")
+        r.truthy(backup.exists(), "rotation: runs.jsonl.1 created")
+        r.le(runs.stat().st_size, 5 * 1024 * 1024, "rotation: runs.jsonl below 5 MB after rotation")
+        r.ge(backup.stat().st_size, 5 * 1024 * 1024, "rotation: runs.jsonl.1 holds the old payload")
 
 
 def test_ps1_stub(r: Runner) -> None:
@@ -1317,6 +1322,179 @@ def test_heartbeat_reports_progress(r: Runner) -> None:
             r.fail("heartbeat progress", "no heartbeat line captured")
 
 
+def test_stream_only_fallback(r: Runner) -> None:
+    r.section("empty -o falls back to the LAST agent message")
+    with _tempdir() as tmp:
+        payload = _verify_payload(tmp)
+        result, _stderr, _elapsed = _run_wrapper(
+            "verify",
+            "stream_only",
+            ["--cwd", str(SKILL_DIR), "--payload-file", str(payload)],
+            timeout_env="60",
+            hard_timeout=45.0,
+        )
+        r.eq(result.get("status"), "ok", "stream-only run parses")
+        r.eq(
+            result.get("summary"),
+            "Fake Codex review succeeded.",
+            "the final agent message wins over the intermediate one",
+        )
+
+
+def test_service_tier_retry_guard(r: Runner) -> None:
+    r.section("service tier retry never repeats work")
+    sys.path.insert(0, str(SKILL_DIR / "scripts"))
+    import invoke_codex_with_claude as wrapper
+
+    r.falsy(
+        wrapper._looks_like_service_tier_error("panic: service_tier was requested"),
+        "a message merely naming the tier is not a refusal",
+    )
+    r.truthy(
+        wrapper._looks_like_service_tier_error("400: service_tier 'priority' is not supported for this account"),
+        "an explicit refusal is detected",
+    )
+
+    refused = wrapper._RunOutcome(
+        raw_output="",
+        exit_code=1,
+        error_summary="boom",
+        stderr_tail="service_tier is not supported",
+        termination="nonzero",
+        event_count=3,
+        last_event_type="command_execution",
+        did_work=True,
+    )
+    r.falsy(
+        wrapper._can_retry_without_tier(refused),
+        "a run that already executed a command is never repeated",
+    )
+    r.truthy(
+        wrapper._can_retry_without_tier(refused._replace(did_work=False, last_event_type="turn.started")),
+        "a run refused before doing anything can be retried",
+    )
+
+
+def test_idle_timeout_per_mode(r: Runner) -> None:
+    r.section("idle limit is per mode, not one global number")
+    sys.path.insert(0, str(SKILL_DIR / "scripts"))
+    import invoke_codex_with_claude as wrapper
+
+    delegate_limit = wrapper._resolve_idle_timeout("delegate")
+    ask_limit = wrapper._resolve_idle_timeout("ask")
+    r.ge(delegate_limit, ask_limit, "delegate tolerates longer silence than ask")
+    r.ge(delegate_limit, 300.0, "delegate survives a long build or test run")
+
+    os.environ["CODEX_WRAPPER_IDLE_TIMEOUT_SECONDS"] = "7"
+    try:
+        r.eq(wrapper._resolve_idle_timeout("delegate"), 7.0, "env override still wins for every mode")
+    finally:
+        del os.environ["CODEX_WRAPPER_IDLE_TIMEOUT_SECONDS"]
+
+
+def test_subprocess_timeout_respects_env(r: Runner) -> None:
+    r.section("sub-runner budget follows the wrapper's own override")
+    sys.path.insert(0, str(SKILL_DIR / "scripts"))
+    import codex_config
+
+    baseline = codex_config.subprocess_timeout_for("plan-review")
+    os.environ["CODEX_WRAPPER_TIMEOUT_SECONDS"] = "1200"
+    try:
+        raised = codex_config.subprocess_timeout_for("plan-review")
+    finally:
+        del os.environ["CODEX_WRAPPER_TIMEOUT_SECONDS"]
+    r.ge(raised, 1200.0, "a raised wrapper timeout raises the caller's budget too")
+    r.ge(raised, baseline, "the override is not ignored in favour of the config")
+
+
+def test_coverage_reconciliation(r: Runner) -> None:
+    r.section("coverage is reconciled against the checklist")
+    sys.path.insert(0, str(SKILL_DIR / "scripts"))
+    import invoke_codex_with_claude as wrapper
+
+    result = {
+        "findings": [
+            {"category": "testing", "title": "t", "detail": "d"},
+            {"category": "security", "title": "t", "detail": "d"},
+        ],
+        "coverage": [
+            {"category": "testing", "findings_count": 1},
+            {"category": "testing", "findings_count": 9},
+            {"category": "invented-category", "findings_count": 4},
+        ],
+    }
+    wrapper._reconcile_coverage("plan-review", result)
+    categories = [entry["category"] for entry in result["coverage"]]
+    expected = [name for name, _ in wrapper.PLAN_REVIEW_CATEGORIES]
+    r.eq(categories, expected, "coverage lists the full checklist, in checklist order")
+    r.falsy(any(c == "invented-category" for c in categories), "categories outside the checklist are dropped")
+    by_name = {entry["category"]: entry["findings_count"] for entry in result["coverage"]}
+    r.eq(by_name["testing"], 1, "the first declaration wins over the duplicate")
+    r.eq(by_name["security"], 1, "a category omitted by Codex is filled from the findings")
+    r.eq(by_name["rollback"], 0, "untouched categories are present with zero")
+
+    ask_result = {"findings": [], "coverage": [{"category": "x", "findings_count": 1}]}
+    wrapper._reconcile_coverage("ask", ask_result)
+    r.falsy("coverage" in ask_result, "modes without a checklist carry no coverage")
+
+
+def test_posix_process_group(r: Runner) -> None:
+    r.section("killing Codex kills what Codex started")
+    if sys.platform == "win32":
+        print("  SKIP  (POSIX-only: Windows uses taskkill /T)")
+        return
+    sys.path.insert(0, str(SKILL_DIR / "scripts"))
+    import invoke_codex_with_claude as wrapper
+
+    r.truthy(wrapper._process_group_kwargs().get("start_new_session"), "the child leads its own session")
+
+    spawner = (
+        "import subprocess, sys, time; "
+        "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)']); "
+        "time.sleep(60)"
+    )
+    proc = subprocess.Popen([sys.executable, "-c", spawner], **wrapper._process_group_kwargs())
+    grandchild_pgid = os.getpgid(proc.pid)
+    wrapper._kill_process_tree(proc.pid)
+    proc.wait(timeout=10)
+    time.sleep(0.5)
+    try:
+        os.killpg(grandchild_pgid, 0)
+        alive = True
+    except (ProcessLookupError, PermissionError):
+        alive = False
+    r.falsy(alive, "the whole process group is gone, grandchildren included")
+
+
+def test_telemetry_diagnostics(r: Runner) -> None:
+    r.section("telemetry records what actually ran")
+    runs = TELEMETRY_SANDBOX / "runs.jsonl"
+    with _tempdir() as tmp:
+        plan = tmp / "p.md"
+        plan.write_text("diag\n", encoding="utf-8")
+        _run_wrapper("plan-review", "success", ["--cwd", str(SKILL_DIR), "--last-message-file", str(plan)])
+    entry = json.loads(runs.read_text(encoding="utf-8").strip().splitlines()[-1])
+    for field in ("model", "model_source", "reasoning_effort", "service_tier", "termination", "event_count"):
+        r.truthy(field in entry, f"telemetry carries {field}")
+    r.eq(entry["reasoning_effort"], "max", "the effort actually used is recorded")
+    r.eq(entry["termination"], "ok", "a clean run is recorded as ok")
+
+    with _tempdir() as tmp:
+        plan = tmp / "p.md"
+        plan.write_text("diag\n", encoding="utf-8")
+        _run_wrapper(
+            "plan-review",
+            "idle_stall",
+            ["--cwd", str(SKILL_DIR), "--last-message-file", str(plan)],
+            timeout_env="60",
+            extra_env={"CODEX_WRAPPER_IDLE_TIMEOUT_SECONDS": "3"},
+            hard_timeout=45.0,
+        )
+    stalled = json.loads(runs.read_text(encoding="utf-8").strip().splitlines()[-1])
+    r.eq(stalled["termination"], "idle", "an idle kill is distinguishable from a wall-clock timeout")
+    r.eq(stalled["error_class"], "idle", "error_class names the termination reason")
+
+
 def test_output_schema_is_strict(r: Runner) -> None:
     r.section("output schema satisfies strict structured output")
     schema = json.loads((SKILL_DIR / "scripts" / "codex_output_schema.json").read_text(encoding="utf-8"))
@@ -1518,6 +1696,13 @@ def main() -> int:
     test_idle_timeout(r)
     test_output_schema_is_strict(r)
     test_coverage_passthrough(r)
+    test_coverage_reconciliation(r)
+    test_stream_only_fallback(r)
+    test_service_tier_retry_guard(r)
+    test_idle_timeout_per_mode(r)
+    test_subprocess_timeout_respects_env(r)
+    test_posix_process_group(r)
+    test_telemetry_diagnostics(r)
     test_reasoning_effort_override(r)
     test_codex_config(r)
     test_analyze_plan_complexity(r)

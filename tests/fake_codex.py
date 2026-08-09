@@ -17,6 +17,8 @@ with ``CODEX_WRAPPER_CODEX_OVERRIDE`` pointing here. Behavior is selected via
     delay_long     Sleep ``FAKE_CODEX_DELAY_SECONDS`` (default 35) then succeed.
     stream_slow    Emit ``FAKE_CODEX_STREAM_EVENTS`` spaced events, then succeed.
     idle_stall     Emit two events, then go silent forever (idle-timeout bait).
+    stream_only    Leave -o empty and stream two agent_message items; only the
+                   last one is the answer, as the real CLI does.
 
 We intentionally accept the same flag surface as the real Codex CLI so the
 wrapper can call us unchanged.
@@ -62,6 +64,8 @@ def _success_payload(mode_hint: str) -> dict:
             "summary": "Fake delegate succeeded.",
             "findings": [],
             "block_recommended": False,
+            "coverage": [],
+            "questions": [],
             "files_created": ["fake/new.txt"],
             "files_edited": ["fake/touched.py"],
             "files_deleted": [],
@@ -83,6 +87,8 @@ def _success_payload(mode_hint: str) -> dict:
             }
         ],
         "block_recommended": False,
+        "coverage": [{"category": "design", "findings_count": 1}],
+        "questions": [],
     }
 
 
@@ -184,6 +190,28 @@ def main() -> int:
             float(os.environ.get("FAKE_CODEX_STREAM_GAP_SECONDS", "0.5")),
         )
         _write(args.output, json.dumps(_success_payload(mode_hint), ensure_ascii=False))
+        return 0
+
+    if behavior == "stream_only":
+        _emit_event({"type": "thread.started", "thread_id": "fake-thread"})
+        _emit_event({"type": "turn.started"})
+        _emit_event(
+            {
+                "type": "item.completed",
+                "item": {"id": "item_0", "type": "agent_message", "text": '{"summary": "intermediate, not final"}'},
+            }
+        )
+        _emit_event(
+            {
+                "type": "item.completed",
+                "item": {
+                    "id": "item_1",
+                    "type": "agent_message",
+                    "text": json.dumps(_success_payload(mode_hint), ensure_ascii=False),
+                },
+            }
+        )
+        _emit_event({"type": "turn.completed"})
         return 0
 
     if behavior == "delay_short":

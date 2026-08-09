@@ -202,13 +202,21 @@ def subprocess_timeout_for(mode: str) -> float:
     A hardcoded value here would silently become the real ceiling and kill
     the wrapper mid-run whenever the per-mode timeout is raised.
     """
-    timeouts = get("wrapper.mode_timeouts", {}) or {}
-    default = get("wrapper.default_timeout_seconds", 300.0)
-    raw = timeouts.get(mode, default) if isinstance(timeouts, dict) else default
-    try:
-        base = float(raw)
-    except (TypeError, ValueError):
-        base = 300.0
+    base: float | None = None
+    env_override = os.environ.get("CODEX_WRAPPER_TIMEOUT_SECONDS")
+    if env_override:
+        try:
+            base = max(1.0, float(env_override))
+        except ValueError:
+            base = None
+    if base is None:
+        timeouts = get("wrapper.mode_timeouts", {}) or {}
+        default = get("wrapper.default_timeout_seconds", 300.0)
+        raw = timeouts.get(mode, default) if isinstance(timeouts, dict) else default
+        try:
+            base = float(raw)
+        except (TypeError, ValueError):
+            base = 300.0
     try:
         multiplier = max(1.0, float(get("wrapper.total_deadline_multiplier", 1.5)))
     except (TypeError, ValueError):

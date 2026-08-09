@@ -54,6 +54,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - With the event stream on, an empty output file fell back to the whole JSONL
   transcript; it now falls back to the last agent message.
 
+### Fixed — from the first exhaustive self-review
+
+The new review pass was run against this very change and returned 34 findings;
+these are the ones that were real defects.
+
+- `status` and `questions` were missing from the output schema, so the
+  `needs_input` contract the prompt asks for was impossible to satisfy under
+  strict structured output. The mocked suite passed only because the fake
+  ignored `--output-schema`.
+- The service-tier fallback ran a second full attempt outside the shared
+  deadline, and applied to `delegate` — a refused tier could re-run a task
+  that had already created, edited or deleted files. It now shares the
+  deadline and never repeats a run that executed anything.
+- Tier refusal was detected by substring, so any failure that merely
+  mentioned the setting triggered a retry. It now requires an explicit
+  rejection and also reads the error events off the stream.
+- `_kill_process_tree` was a no-op outside Windows: children of a killed
+  Codex kept running on Linux and macOS. The child now leads its own session
+  and the whole group is signalled.
+- One global 180s idle limit was applied to every mode, including `delegate`,
+  which legitimately runs long silent commands. Idle limits are per mode.
+- `subprocess_timeout_for` ignored `CODEX_WRAPPER_TIMEOUT_SECONDS`, so raising
+  the wrapper's timeout made the sub-runners kill it earlier.
+- `test_telemetry_rotation` wrote 5 MB into the real `cache/runs.jsonl` and
+  rotated the history away. The whole suite now writes to a scratch cache via
+  `CODEX_WRAPPER_CACHE_DIR`.
+- `coverage` was an unchecked self-declaration; it is now reconciled against
+  the checklist the prompt actually asked for, with `coverage_mismatch` when
+  the declared counts disagree with the findings.
+- Telemetry recorded neither the resolved model, effort and service tier nor
+  how a run ended, so an `auto`-selected model could change silently — the
+  exact problem the change set out to fix.
+- `SETUP.md` now declares the minimum Codex CLI version, and `setup.py` warns
+  when the installed one is older.
+
 ## [0.4.0] — 2026-04-30
 
 ### Phase 3 — Background runner + iterative review + complexity hint

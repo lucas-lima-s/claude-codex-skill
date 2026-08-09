@@ -457,13 +457,20 @@ English alongside.
    | severity | {S} |
    | confidence | {C} |
    | findings | {N} |
-   | coverage | {categories with findings}/{total categories} |
+   | coverage | {categories swept}/{checklist size} ({categories with findings} with findings) |
 
    The `coverage` row only exists when the result carries a `coverage`
-   array (`plan-review` and `verify`). It is the proof that the review
-   swept every category rather than stopping at a comfortable number of
-   findings — never drop it, and never present a subset of the findings
-   because the list is long.
+   array (`plan-review` and `verify`). The numerator counts categories
+   **swept**, not categories that produced findings — a clean review of
+   11 categories is `11/11 (4 with findings)`, never `4/11`. It is the
+   proof that the review swept every category rather than stopping at a
+   comfortable number of findings, so never drop it and never present a
+   subset of the findings because the list is long.
+
+   When the result carries `coverage_mismatch: true`, the counts Codex
+   declared disagree with the findings it returned. Say so in one line
+   under the table — it means the coverage numbers are unreliable for
+   that run, not that findings are missing.
 
 3. Summary as a blockquote: `> {summary}`
 4. Findings as a numbered list:

@@ -62,6 +62,7 @@ import json
 import os
 import random
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -71,7 +72,7 @@ import uuid
 from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 BIN_DIR = Path(__file__).resolve().parent
 SKILL_DIR = BIN_DIR.parent
@@ -92,7 +93,7 @@ from codex_config import (
     resolve_python as _resolve_python,
 )
 
-CACHE_DIR = SKILL_DIR / "cache"
+CACHE_DIR = Path(os.environ.get("CODEX_WRAPPER_CACHE_DIR") or (SKILL_DIR / "cache"))
 TELEMETRY_FILE = CACHE_DIR / "runs.jsonl"
 TELEMETRY_BACKUP = CACHE_DIR / "runs.jsonl.1"
 TELEMETRY_MAX_BYTES = int(_config_get("wrapper.telemetry_max_bytes", 5 * 1024 * 1024))
@@ -100,23 +101,54 @@ TELEMETRY_SCHEMA_VERSION = int(_config_get("wrapper.telemetry_schema_version", 1
 
 DEFAULT_TIMEOUT_SECONDS = float(_config_get("wrapper.default_timeout_seconds", 300.0))
 
-MODE_TIMEOUTS: dict[str, float] = {
-    k: float(v)
-    for k, v in _config_get(
-        "wrapper.mode_timeouts",
-        {
-            "ask": 300.0,
-            "verify": 600.0,
-            "plan-review": 900.0,
-            "delegate": 900.0,
-            "insight": 1200.0,
-        },
-    ).items()
-}
+
+def _float_map(key: str, fallback: dict[str, float]) -> dict[str, float]:
+    """Read a {name: seconds} config map, ignoring unusable entries.
+
+    A bad value in ``config.local.json`` must not raise at import time —
+    the wrapper's contract is that it never raises, and a crash here would
+    happen before any error handling exists.
+    """
+    raw = _config_get(key, fallback)
+    if not isinstance(raw, dict):
+        return dict(fallback)
+    out: dict[str, float] = {}
+    for name, value in raw.items():
+        try:
+            out[str(name)] = float(value)
+        except (TypeError, ValueError):
+            continue
+    return out or dict(fallback)
+
+
+MODE_TIMEOUTS: dict[str, float] = _float_map(
+    "wrapper.mode_timeouts",
+    {
+        "ask": 300.0,
+        "verify": 600.0,
+        "plan-review": 900.0,
+        "delegate": 900.0,
+        "insight": 1200.0,
+    },
+)
 
 IDLE_TIMEOUT_SECONDS = float(_config_get("wrapper.idle_timeout_seconds", 180.0))
+
+MODE_IDLE_TIMEOUTS: dict[str, float] = _float_map(
+    "wrapper.mode_idle_timeouts",
+    {
+        "ask": 180.0,
+        "verify": 240.0,
+        "plan-review": 300.0,
+        "delegate": 600.0,
+        "insight": 300.0,
+    },
+)
+
 TOTAL_DEADLINE_MULTIPLIER = float(_config_get("wrapper.total_deadline_multiplier", 1.5))
 MIN_RETRY_BUDGET_SECONDS = 60.0
+MAX_CAPTURED_STREAM_ERRORS = 10
+WORK_EVENT_TYPES = ("command_execution", "file_change", "patch_apply", "mcp_tool_call", "web_search")
 
 MODE_REASONING: dict[str, str] = dict(
     _config_get(
@@ -293,6 +325,46 @@ def _checklist_block(categories: tuple[tuple[str, str], ...]) -> str:
     return f"Checklist categories (sweep each one):\n{lines}\n"
 
 
+def _checklist_for(mode: str) -> tuple[tuple[str, str], ...]:
+    if mode == "plan-review":
+        return PLAN_REVIEW_CATEGORIES
+    if mode == "verify":
+        return VERIFY_CATEGORIES
+    return ()
+
+
+def _reconcile_coverage(mode: str, result: dict[str, Any]) -> None:
+    """Rebuild ``coverage`` as the full checklist, in checklist order.
+
+    As returned by Codex, coverage is a free-form self-declaration: it can
+    omit categories, repeat them, or invent names, and still read as proof
+    that everything was swept. Reconciling against the checklist the prompt
+    actually asked for makes the denominator real, and ``coverage_mismatch``
+    records when the declared counts disagree with the findings themselves.
+    """
+    checklist = _checklist_for(mode)
+    if not checklist:
+        result.pop("coverage", None)
+        return
+
+    declared: dict[str, int] = {}
+    for entry in result.get("coverage") or []:
+        category = entry.get("category")
+        if isinstance(category, str) and category not in declared:
+            declared[category] = int(entry.get("findings_count") or 0)
+
+    actual: dict[str, int] = {}
+    for finding in result.get("findings") or []:
+        category = str(finding.get("category") or "")
+        actual[category] = actual.get(category, 0) + 1
+
+    result["coverage"] = [
+        {"category": name, "findings_count": declared.get(name, actual.get(name, 0))} for name, _ in checklist
+    ]
+    total_declared = sum(item["findings_count"] for item in result["coverage"])
+    result["coverage_mismatch"] = total_declared != len(result.get("findings") or [])
+
+
 def _build_prompt(
     mode: str,
     context_text: str,
@@ -311,9 +383,10 @@ def _build_prompt(
         "- `block_recommended` must be false unless severity=high AND confidence=high.\n"
         "- `findings` must be an array; empty when nothing actionable.\n"
         "- `summary` is one paragraph, plain text, no markdown headings.\n"
-        "- If you genuinely cannot proceed without more info, set "
-        '`status="needs_input"` and provide concrete `questions` '
+        '- `status` is "ok" for a normal answer. If you genuinely cannot proceed without '
+        'more info, set `status="needs_input"` and fill `questions` with concrete entries '
         "(each as {id, question, context}).\n"
+        "- `questions` is an empty array whenever status is `ok`.\n"
     )
     if mode in COVERAGE_MODES:
         header += (
@@ -456,6 +529,17 @@ def _resolve_model(mode: str) -> str:
     return _strongest_model_from_cache() or MODEL_FALLBACK
 
 
+def _model_source(mode: str) -> str:
+    """Where the effective model came from, for the telemetry record."""
+    if os.environ.get("CODEX_WRAPPER_MODEL", "").strip():
+        return "env"
+    if str(MODE_MODEL.get(mode, "")).strip():
+        return "mode_model"
+    if CONFIGURED_MODEL and CONFIGURED_MODEL != "auto":
+        return "config"
+    return "auto" if _strongest_model_from_cache() else "fallback"
+
+
 def _resolve_service_tier() -> str:
     env_tier = os.environ.get("CODEX_WRAPPER_SERVICE_TIER", "").strip()
     return env_tier or SERVICE_TIER
@@ -528,17 +612,32 @@ class _Progress:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._last_event_at = time.monotonic()
+        self._errors: deque[str] = deque(maxlen=MAX_CAPTURED_STREAM_ERRORS)
         self.event_count = 0
         self.last_event_type = "none"
         self.last_agent_message = ""
+        self.did_work = False
 
-    def record(self, event_type: str, agent_message: str | None = None) -> None:
+    def record(
+        self,
+        event_type: str,
+        agent_message: str | None = None,
+        error_message: str | None = None,
+    ) -> None:
         with self._lock:
             self._last_event_at = time.monotonic()
             self.event_count += 1
             self.last_event_type = event_type or "unknown"
             if agent_message:
                 self.last_agent_message = agent_message
+            if event_type in WORK_EVENT_TYPES:
+                self.did_work = True
+            if error_message:
+                self._errors.append(error_message)
+
+    def error_text(self) -> str:
+        with self._lock:
+            return "\n".join(self._errors)
 
     def touch(self) -> None:
         with self._lock:
@@ -651,9 +750,64 @@ def _generic_error(mode: str, started_at: float, summary: str) -> dict[str, Any]
     return result
 
 
+_ACTIVE_PROCESS: subprocess.Popen | None = None
+_ACTIVE_PROCESS_LOCK = threading.Lock()
+
+
+def _set_active_process(proc: subprocess.Popen | None) -> None:
+    global _ACTIVE_PROCESS
+    with _ACTIVE_PROCESS_LOCK:
+        _ACTIVE_PROCESS = proc
+
+
+def _handle_termination(signum: int, _frame: Any) -> None:
+    """Take the running Codex down with us.
+
+    The child leads its own session so its grandchildren can be killed as a
+    group, which also means a signal aimed at this wrapper (``codex_bg.py
+    cancel``, a Ctrl-C) no longer reaches it. Forwarding the kill keeps
+    cancellation working.
+    """
+    with _ACTIVE_PROCESS_LOCK:
+        proc = _ACTIVE_PROCESS
+    if proc is not None and proc.poll() is None:
+        _kill_process_tree(proc.pid)
+        try:
+            proc.kill()
+        except OSError:
+            pass
+    raise SystemExit(128 + signum)
+
+
+def _install_signal_handlers() -> None:
+    for name in ("SIGTERM", "SIGINT", "SIGBREAK"):
+        sig = getattr(signal, name, None)
+        if sig is None:
+            continue
+        try:
+            signal.signal(sig, _handle_termination)
+        except (ValueError, OSError):
+            pass
+
+
+def _process_group_kwargs() -> dict[str, Any]:
+    """Popen flags that make the child killable as a whole tree.
+
+    On POSIX the child leads its own session, so the whole group can be
+    signalled at once; on Windows the tree is walked by taskkill instead.
+    """
+    if sys.platform == "win32":
+        return {}
+    return {"start_new_session": True}
+
+
 def _kill_process_tree(pid: int) -> None:
-    """Kill the whole subprocess tree on Windows (taskkill /T) so node
-    grandchildren launched by codex.cmd do not linger."""
+    """Kill the child and everything it spawned.
+
+    A killed Codex leaves grandchildren behind otherwise — node processes
+    on Windows, and any shell command it was running under ``delegate`` on
+    POSIX, which would keep writing to disk after the wrapper gave up.
+    """
     if sys.platform == "win32":
         try:
             subprocess.run(
@@ -663,6 +817,11 @@ def _kill_process_tree(pid: int) -> None:
             )
         except (OSError, subprocess.TimeoutExpired):
             pass
+        return
+    try:
+        os.killpg(os.getpgid(pid), signal.SIGKILL)
+    except (OSError, AttributeError):
+        pass
 
 
 # --------------------------------------------------------------- INVOCATION
@@ -670,37 +829,63 @@ def _kill_process_tree(pid: int) -> None:
 MAX_CAPTURED_STDOUT_BYTES = 2 * 1024 * 1024
 MAX_CAPTURED_STDERR_LINES = 50
 SERVICE_TIER_ERROR_MARKERS = ("service_tier", "service tier")
+SERVICE_TIER_REJECTION_MARKERS = (
+    "unsupported",
+    "not supported",
+    "not available",
+    "unavailable",
+    "not allowed",
+    "not entitled",
+    "invalid",
+    "unrecognized",
+    "unknown",
+    "permission",
+    "forbidden",
+)
 
 
-def _resolve_idle_timeout() -> float:
+def _resolve_idle_timeout(mode: str) -> float:
     raw = os.environ.get("CODEX_WRAPPER_IDLE_TIMEOUT_SECONDS")
     if raw:
         try:
             return max(0.0, float(raw))
         except ValueError:
             pass
-    return IDLE_TIMEOUT_SECONDS
+    configured = MODE_IDLE_TIMEOUTS.get(mode)
+    if configured is None:
+        return IDLE_TIMEOUT_SECONDS
+    try:
+        return max(0.0, float(configured))
+    except (TypeError, ValueError):
+        return IDLE_TIMEOUT_SECONDS
 
 
-def _classify_stream_event(line: str) -> tuple[str | None, str | None]:
-    """Map one ``--json`` line to (event tag, agent message).
+def _classify_stream_event(line: str) -> tuple[str | None, str | None, str | None]:
+    """Map one ``--json`` line to (event tag, agent message, error message).
 
-    Returns ``(None, None)`` for anything that is not a Codex event object,
-    so plain output still counts as liveness without being mistaken for a
-    structured event.
+    Returns all-None for anything that is not a Codex event object, so plain
+    output still counts as liveness without being mistaken for a structured
+    event.
     """
     try:
         data = json.loads(line)
     except ValueError:
-        return None, None
+        return None, None, None
     if not isinstance(data, dict):
-        return None, None
+        return None, None, None
     event_type = data.get("type")
     if not isinstance(event_type, str) or not event_type:
-        return None, None
+        return None, None, None
 
     label = event_type
     message: str | None = None
+    error: str | None = None
+    if event_type in ("error", "turn.failed"):
+        raw_error = data.get("message") or data.get("error")
+        if isinstance(raw_error, dict):
+            raw_error = raw_error.get("message")
+        if isinstance(raw_error, str) and raw_error.strip():
+            error = raw_error
     item = data.get("item")
     if isinstance(item, dict):
         item_type = item.get("type")
@@ -710,15 +895,15 @@ def _classify_stream_event(line: str) -> tuple[str | None, str | None]:
             text_value = item.get("text")
             if isinstance(text_value, str) and text_value.strip():
                 message = text_value
-    return label, message
+    return label, message, error
 
 
 def _pump_stdout(stream: Any, progress: _Progress, chunks: list[str]) -> None:
     captured = 0
     try:
         for line in stream:
-            event_type, message = _classify_stream_event(line.strip())
-            progress.record(event_type or "output", message)
+            event_type, message, error = _classify_stream_event(line.strip())
+            progress.record(event_type or "output", message, error)
             if captured < MAX_CAPTURED_STDOUT_BYTES:
                 chunks.append(line)
                 captured += len(line)
@@ -796,6 +981,30 @@ def _supervise(
     return None
 
 
+class _RunOutcome(NamedTuple):
+    raw_output: str
+    exit_code: int
+    error_summary: str | None
+    stderr_tail: str
+    termination: str
+    event_count: int
+    last_event_type: str
+    did_work: bool
+
+
+def _failed_outcome(summary: str) -> _RunOutcome:
+    return _RunOutcome(
+        raw_output="",
+        exit_code=-1,
+        error_summary=summary,
+        stderr_tail="",
+        termination="failed",
+        event_count=0,
+        last_event_type="none",
+        did_work=False,
+    )
+
+
 def _run_codex_once(
     mode: str,
     prompt: str,
@@ -804,8 +1013,8 @@ def _run_codex_once(
     heartbeat: _Heartbeat,
     effort_override: str | None = None,
     with_service_tier: bool = True,
-) -> tuple[str, int, str | None, str]:
-    """Run Codex once. Returns (raw_output, exit_code, error_summary, stderr_tail).
+) -> _RunOutcome:
+    """Run Codex once.
 
     ``error_summary`` is None on a clean run (regardless of Codex content);
     populated only when the subprocess could not run, timed out, went silent
@@ -832,7 +1041,7 @@ def _run_codex_once(
             with_service_tier=with_service_tier,
         )
         if not cmd:
-            return "", -1, t("wrapper.error.codex_unavailable"), ""
+            return _failed_outcome(t("wrapper.error.codex_unavailable"))
 
         try:
             proc = subprocess.Popen(
@@ -845,10 +1054,12 @@ def _run_codex_once(
                 errors="replace",
                 bufsize=1,
                 env=_codex_child_env(),
+                **_process_group_kwargs(),
             )
         except (FileNotFoundError, OSError) as exc:
-            return "", -1, t("wrapper.error.process_start", exc=exc.__class__.__name__), ""
+            return _failed_outcome(t("wrapper.error.process_start", exc=exc.__class__.__name__))
 
+        _set_active_process(proc)
         progress = _Progress()
         heartbeat.progress = progress
         heartbeat.set_phase("running")
@@ -863,26 +1074,39 @@ def _run_codex_once(
         for worker in workers:
             worker.start()
 
-        idle_limit = _resolve_idle_timeout() if _json_stream_enabled() else 0.0
+        idle_limit = _resolve_idle_timeout(mode) if _json_stream_enabled() else 0.0
         started_at = time.monotonic()
         kill_reason = _supervise(proc, progress, heartbeat, timeout, idle_limit)
         for worker in workers:
             worker.join(timeout=5)
-        stderr_tail = "".join(stderr_lines)
+        stderr_tail = "".join(stderr_lines) + progress.error_text()
+        common = {
+            "stderr_tail": stderr_tail,
+            "event_count": progress.event_count,
+            "last_event_type": progress.last_event_type,
+            "did_work": progress.did_work,
+        }
 
         if kill_reason == "timeout":
-            return "", -1, t("wrapper.error.timeout", timeout=timeout), stderr_tail
+            return _RunOutcome(
+                raw_output="",
+                exit_code=-1,
+                error_summary=t("wrapper.error.timeout", timeout=timeout),
+                termination="timeout",
+                **common,
+            )
         if kill_reason == "idle":
-            return (
-                "",
-                -1,
-                t(
+            return _RunOutcome(
+                raw_output="",
+                exit_code=-1,
+                error_summary=t(
                     "wrapper.error.idle_timeout",
                     idle=progress.idle_seconds(),
                     limit=idle_limit,
                     elapsed=time.monotonic() - started_at,
                 ),
-                stderr_tail,
+                termination="idle",
+                **common,
             )
 
         raw_output = ""
@@ -895,27 +1119,51 @@ def _run_codex_once(
             raw_output = progress.last_agent_message or "".join(stdout_chunks)
 
         if proc.returncode != 0:
-            return (
-                raw_output,
-                proc.returncode,
-                t(
-                    "wrapper.error.nonzero",
-                    code=proc.returncode,
-                ),
-                stderr_tail,
+            return _RunOutcome(
+                raw_output=raw_output,
+                exit_code=proc.returncode,
+                error_summary=t("wrapper.error.nonzero", code=proc.returncode),
+                termination="nonzero",
+                **common,
             )
         heartbeat.set_phase("parsing")
-        return raw_output, proc.returncode, None, stderr_tail
+        return _RunOutcome(
+            raw_output=raw_output,
+            exit_code=proc.returncode,
+            error_summary=None,
+            termination="ok",
+            **common,
+        )
     finally:
+        _set_active_process(None)
         try:
             out_path.unlink(missing_ok=True)
         except OSError:
             pass
 
 
-def _looks_like_service_tier_error(stderr_tail: str) -> bool:
-    lowered = stderr_tail.lower()
-    return any(marker in lowered for marker in SERVICE_TIER_ERROR_MARKERS)
+def _looks_like_service_tier_error(diagnostics: str) -> bool:
+    """True only for a message that names the tier *and* rejects it.
+
+    Matching the bare word would retry on any failure that happens to
+    mention the setting, which for ``delegate`` means redoing real work.
+    """
+    lowered = diagnostics.lower()
+    if not any(marker in lowered for marker in SERVICE_TIER_ERROR_MARKERS):
+        return False
+    return any(marker in lowered for marker in SERVICE_TIER_REJECTION_MARKERS)
+
+
+def _can_retry_without_tier(outcome: _RunOutcome) -> bool:
+    if outcome.error_summary is None or outcome.exit_code == 0:
+        return False
+    if not _resolve_service_tier():
+        return False
+    if not _looks_like_service_tier_error(outcome.stderr_tail):
+        return False
+    if not _json_stream_enabled():
+        return False
+    return not outcome.did_work
 
 
 def _run_codex(
@@ -925,13 +1173,16 @@ def _run_codex(
     timeout: float,
     heartbeat: _Heartbeat,
     effort_override: str | None = None,
-) -> tuple[str, int, str | None]:
+    deadline: float | None = None,
+) -> _RunOutcome:
     """Run Codex, retrying once without the fast service tier if it is refused.
 
     An account that loses access to the priority tier would otherwise fail
-    every single review; the extra attempt only ever happens on failure.
+    every single review. The retry shares the caller's deadline so it cannot
+    double the wall-clock cost, and never repeats a run that already did
+    work.
     """
-    raw, exit_code, err, stderr_tail = _run_codex_once(
+    outcome = _run_codex_once(
         mode,
         prompt,
         cwd,
@@ -939,19 +1190,23 @@ def _run_codex(
         heartbeat,
         effort_override=effort_override,
     )
-    tier_refused = err is not None and exit_code != 0 and _looks_like_service_tier_error(stderr_tail)
-    if tier_refused and _resolve_service_tier():
-        heartbeat.set_phase("retrying-without-service-tier")
-        raw, exit_code, err, _ = _run_codex_once(
-            mode,
-            prompt,
-            cwd,
-            timeout,
-            heartbeat,
-            effort_override=effort_override,
-            with_service_tier=False,
-        )
-    return raw, exit_code, err
+    if not _can_retry_without_tier(outcome):
+        return outcome
+
+    remaining = timeout if deadline is None else deadline - time.monotonic()
+    if remaining < min(MIN_RETRY_BUDGET_SECONDS, timeout):
+        return outcome
+
+    heartbeat.set_phase("retrying-without-service-tier")
+    return _run_codex_once(
+        mode,
+        prompt,
+        cwd,
+        min(timeout, remaining),
+        heartbeat,
+        effort_override=effort_override,
+        with_service_tier=False,
+    )
 
 
 def _wants_retry(mode: str, normalized: dict[str, Any]) -> bool:
@@ -1083,32 +1338,35 @@ def _invoke_codex(
     timeout: float,
     heartbeat: _Heartbeat,
     effort_override: str | None = None,
-) -> tuple[dict[str, Any], int, int]:
+) -> tuple[dict[str, Any], int, int, _RunOutcome]:
     """Run Codex with one optional retry on JSON parse failure.
 
-    Both attempts share a single deadline (``timeout`` times the configured
-    multiplier), so a retry can never silently double the wall-clock cost of
-    a run.
+    Every attempt — including the retry without the service tier — shares a
+    single deadline (``timeout`` times the configured multiplier), so no
+    combination of retries can silently multiply the wall-clock cost.
 
-    Returns ``(normalized_result, retry_count, last_exit_code)``.
+    Returns ``(normalized_result, retry_count, last_exit_code, last_outcome)``.
     """
     started_at = time.monotonic()
     hard_deadline = started_at + timeout * max(1.0, TOTAL_DEADLINE_MULTIPLIER)
-    raw, exit_code, err = _run_codex(
+    outcome = _run_codex(
         mode,
         prompt,
         cwd,
         timeout,
         heartbeat,
         effort_override=effort_override,
+        deadline=hard_deadline,
     )
     retry_count = 0
 
-    if err is not None:
-        return _generic_error(mode, started_at, err), retry_count, exit_code
+    if outcome.error_summary is not None:
+        error = _generic_error(mode, started_at, outcome.error_summary)
+        error["error_class"] = outcome.termination
+        return error, retry_count, outcome.exit_code, outcome
 
-    normalized = normalize(raw, mode=mode)
-    raw_data = _try_extract_raw_dict(raw)
+    normalized = normalize(outcome.raw_output, mode=mode)
+    raw_data = _try_extract_raw_dict(outcome.raw_output)
     if raw_data:
         _enrich_delegate_fields(normalized, raw_data)
         _enrich_needs_input(normalized, raw_data)
@@ -1118,34 +1376,32 @@ def _invoke_codex(
     if _wants_retry(mode, normalized) and remaining >= retry_budget:
         heartbeat.set_phase("retrying")
         retry_prompt = prompt + "\n\n--- Retry instruction ---\n" + RETRY_INSTRUCTION
-        raw2, exit_code2, err2 = _run_codex(
+        outcome2 = _run_codex(
             mode,
             retry_prompt,
             cwd,
             min(timeout, remaining),
             heartbeat,
             effort_override=effort_override,
+            deadline=hard_deadline,
         )
         retry_count = 1
-        if err2 is None:
-            normalized2 = normalize(raw2, mode=mode)
-            raw_data2 = _try_extract_raw_dict(raw2)
+        if outcome2.error_summary is None:
+            normalized2 = normalize(outcome2.raw_output, mode=mode)
+            raw_data2 = _try_extract_raw_dict(outcome2.raw_output)
             if raw_data2:
                 _enrich_delegate_fields(normalized2, raw_data2)
                 _enrich_needs_input(normalized2, raw_data2)
             if normalized2.get("status") != "error":
                 normalized = normalized2
-                exit_code = exit_code2
             else:
-                salvaged = _best_effort_partial(mode, raw2) or _best_effort_partial(mode, raw)
-                if salvaged is not None:
-                    normalized = salvaged
-                    exit_code = exit_code2
-                else:
-                    normalized = normalized2
-                    exit_code = exit_code2
+                salvaged = _best_effort_partial(mode, outcome2.raw_output) or _best_effort_partial(
+                    mode, outcome.raw_output
+                )
+                normalized = salvaged if salvaged is not None else normalized2
+            outcome = outcome2
 
-    return normalized, retry_count, exit_code
+    return normalized, retry_count, outcome.exit_code, outcome
 
 
 # --------------------------------------------------------------- TIMEOUT
@@ -1297,6 +1553,7 @@ def main(argv: list[str] | None = None) -> int:
     # active — none are passive. Setup wizard is auto-triggered (only in
     # TTY) before any Codex invocation when locale is unset.
     ensure_setup_complete()
+    _install_signal_handlers()
     started_at = time.monotonic()
     started_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
     run_id = uuid.uuid4().hex[:12]
@@ -1304,6 +1561,8 @@ def main(argv: list[str] | None = None) -> int:
     exit_code = 0
     error_class = ""
     cwd_str = args.cwd
+    outcome: _RunOutcome | None = None
+    effort_override = None
 
     heartbeat = _Heartbeat(args.mode, started_at, Path(tempfile.gettempdir()))
     heartbeat.start()
@@ -1321,7 +1580,7 @@ def main(argv: list[str] | None = None) -> int:
         timeout = _resolve_timeout(args.mode)
         effort_override = _resolve_effort_override(getattr(args, "reasoning_effort", None))
         heartbeat.set_phase("invoking-codex")
-        result, retry_count, exit_code = _invoke_codex(
+        result, retry_count, exit_code, outcome = _invoke_codex(
             args.mode,
             prompt,
             cwd,
@@ -1329,6 +1588,7 @@ def main(argv: list[str] | None = None) -> int:
             heartbeat,
             effort_override=effort_override,
         )
+        _reconcile_coverage(args.mode, result)
     except Exception as exc:  # wrapper must never raise
         error_class = exc.__class__.__name__
         result = _generic_error(args.mode, started_at, t("wrapper.error.internal", exc=error_class))
@@ -1337,6 +1597,8 @@ def main(argv: list[str] | None = None) -> int:
 
     duration = max(0.0, time.monotonic() - started_at)
     result["duration_seconds"] = duration
+    if not error_class:
+        error_class = str(result.get("error_class") or "")
 
     _write_telemetry(
         {
@@ -1351,6 +1613,13 @@ def main(argv: list[str] | None = None) -> int:
             "retry_count": retry_count,
             "error_class": error_class,
             "exit_code": exit_code,
+            "model": _resolve_model(args.mode),
+            "model_source": _model_source(args.mode),
+            "reasoning_effort": effort_override or MODE_REASONING.get(args.mode, ""),
+            "service_tier": _resolve_service_tier(),
+            "termination": outcome.termination if outcome else "",
+            "event_count": outcome.event_count if outcome else 0,
+            "last_event_type": outcome.last_event_type if outcome else "",
         }
     )
 

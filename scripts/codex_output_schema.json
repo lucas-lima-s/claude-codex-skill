@@ -3,8 +3,33 @@
   "title": "ClaudeCodexReviewResult",
   "type": "object",
   "additionalProperties": false,
-  "required": ["severity", "confidence", "summary", "findings", "block_recommended", "coverage"],
+  "required": ["status", "severity", "confidence", "summary", "findings", "block_recommended", "coverage", "questions"],
   "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["ok", "needs_input"],
+      "description": "needs_input only when the review cannot proceed without an answer."
+    },
+    "questions": {
+      "type": "array",
+      "description": "Blocking questions when status=needs_input; empty array otherwise.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "question", "context"],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "question": {
+            "type": "string"
+          },
+          "context": {
+            "type": "string"
+          }
+        }
+      }
+    },
     "severity": {
       "type": "string",
       "enum": ["low", "medium", "high"]
@@ -61,7 +86,8 @@
             "type": "string"
           },
           "findings_count": {
-            "type": "integer"
+            "type": "integer",
+            "minimum": 0
           }
         }
       }

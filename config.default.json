@@ -24,6 +24,13 @@
         "insight": 1200
       },
       "idle_timeout_seconds": 180,
+      "mode_idle_timeouts": {
+        "ask": 180,
+        "verify": 240,
+        "plan-review": 300,
+        "delegate": 600,
+        "insight": 300
+      },
       "total_deadline_multiplier": 1.5,
       "model": "auto",
       "model_fallback": "gpt-5.6-sol",
@@ -148,6 +155,7 @@
       "setup.locale_set": "Idioma definido: {locale}",
       "setup.validation.header": "Validando ambiente...",
       "setup.validation.codex_ok": "  [ok] Codex CLI: {version}",
+      "setup.validation.codex_outdated": "  [atenção] Codex CLI {version} é anterior ao mínimo suportado ({minimum}). Os padrões da skill dependem de --json, service_tier e dos níveis de reasoning max/ultra; atualize com `npm i -g @openai/codex@latest`.",
       "setup.validation.codex_missing": "  [ausente] Codex CLI não está no PATH. Instale: https://github.com/openai/codex",
       "setup.validation.python_ok": "  [ok] Python: {executable} ({version})",
       "setup.validation.python_warn_skills_python": "  [aviso] $SKILLS_PYTHON não definido; usando fallback: {executable}",
@@ -237,6 +245,7 @@
       "setup.locale_set": "Language set to: {locale}",
       "setup.validation.header": "Validating environment...",
       "setup.validation.codex_ok": "  [ok] Codex CLI: {version}",
+      "setup.validation.codex_outdated": "  [warning] Codex CLI {version} is older than the supported minimum ({minimum}). The skill's defaults rely on --json, service_tier and the max/ultra reasoning levels; update with `npm i -g @openai/codex@latest`.",
       "setup.validation.codex_missing": "  [missing] Codex CLI not found in PATH. Install: https://github.com/openai/codex",
       "setup.validation.python_ok": "  [ok] Python: {executable} ({version})",
       "setup.validation.python_warn_skills_python": "  [warn] $SKILLS_PYTHON not set; falling back to: {executable}",

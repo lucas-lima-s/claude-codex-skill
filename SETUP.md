@@ -6,7 +6,13 @@ Supported on Windows, Linux, and macOS via Python 3.10+.
 
 ## Requirements
 
-- Codex CLI installed and on `PATH` (`codex --version` must respond).
+- Codex CLI **0.146.0 or newer**, on `PATH` (`codex --version` must
+  respond). The wrapper's defaults depend on `codex exec --json` for the
+  liveness stream, `-c service_tier=`, `-m`, and the `max` / `ultra`
+  reasoning levels; older CLIs reject them and every run fails. Point
+  `wrapper.model` at an explicit slug and set
+  `CODEX_WRAPPER_USE_JSON_STREAM=0` if you must run an older one, and
+  expect the idle guard to be inactive.
 - Python available via `$SKILLS_PYTHON` (preferred),
   `$CLAUDE_AUTOMATION_PYTHON`, or simply `python` / `python3` on `PATH`.
 - (Optional) Credentials for the Codex subprocess in
@@ -60,7 +66,8 @@ To use a per-skill `.env` as the primary source:
 | `SKILLS_PYTHON` | Preferred Python interpreter. |
 | `CLAUDE_AUTOMATION_PYTHON` | Python fallback. |
 | `CODEX_WRAPPER_TIMEOUT_SECONDS` | Global wall-clock override (seconds). Overrides the per-mode ceiling. |
-| `CODEX_WRAPPER_IDLE_TIMEOUT_SECONDS` | Kill Codex after this many seconds without a single event on the stream (default 180). `0` disables the idle guard and leaves only the wall clock. |
+| `CODEX_WRAPPER_IDLE_TIMEOUT_SECONDS` | Kill Codex after this many seconds without a single event on the stream. Overrides the per-mode `wrapper.mode_idle_timeouts` (180s for `ask` up to 600s for `delegate`, which legitimately runs long silent commands). `0` disables the idle guard and leaves only the wall clock. |
+| `CODEX_WRAPPER_CACHE_DIR` | Where `runs.jsonl` telemetry is written. Point it at a scratch directory to keep a test run from polluting or rotating away the real record. |
 | `CODEX_WRAPPER_MODEL` | Model slug passed as `codex exec -m`. Overrides `wrapper.model`, whose default (`auto`) resolves the strongest model the CLI advertises. |
 | `CODEX_WRAPPER_SERVICE_TIER` | Codex service tier. `priority` is the fast tier (default); `default` opts out and trades speed for quota. |
 | `CODEX_WRAPPER_CODEX_OVERRIDE` | Points to an alternative Python script invoked instead of the real `codex` (testing only — see `tests/fake_codex.py`). |
