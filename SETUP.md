@@ -59,10 +59,14 @@ To use a per-skill `.env` as the primary source:
 |---|---|
 | `SKILLS_PYTHON` | Preferred Python interpreter. |
 | `CLAUDE_AUTOMATION_PYTHON` | Python fallback. |
-| `CODEX_WRAPPER_TIMEOUT_SECONDS` | Global timeout override (seconds). Overrides the per-mode default. |
+| `CODEX_WRAPPER_TIMEOUT_SECONDS` | Global wall-clock override (seconds). Overrides the per-mode ceiling. |
+| `CODEX_WRAPPER_IDLE_TIMEOUT_SECONDS` | Kill Codex after this many seconds without a single event on the stream (default 180). `0` disables the idle guard and leaves only the wall clock. |
+| `CODEX_WRAPPER_MODEL` | Model slug passed as `codex exec -m`. Overrides `wrapper.model`, whose default (`auto`) resolves the strongest model the CLI advertises. |
+| `CODEX_WRAPPER_SERVICE_TIER` | Codex service tier. `priority` is the fast tier (default); `default` opts out and trades speed for quota. |
 | `CODEX_WRAPPER_CODEX_OVERRIDE` | Points to an alternative Python script invoked instead of the real `codex` (testing only — see `tests/fake_codex.py`). |
 | `CODEX_WRAPPER_DISABLE_HEARTBEAT` | When `1`, disables the progress heartbeat on `stderr`. |
-| `CODEX_WRAPPER_USE_JSON_STREAM` | When `1`, attempts `codex exec --json` (event stream) with automatic fallback to the default mode. |
+| `CODEX_WRAPPER_HEARTBEAT_INTERVAL_SECONDS` | Seconds between heartbeat lines (default 15). |
+| `CODEX_WRAPPER_USE_JSON_STREAM` | `codex exec --json` is on by default because the idle guard is fed by it. Set to `0` to drop the flag, which also disables the idle guard. |
 | `CODEX_WRAPPER_TELEMETRY_DISABLED` | When `1`, skips writing to `cache/runs.jsonl`. |
 | `CODEX_BG_MAX_CONCURRENT` | Concurrent background runs limit (default 5). Override with `--max-concurrent N` on `codex_bg.py start`. |
 | `CODEX_DIALOGUE_MAX_TURNS` | Default turn count for `codex_dialogue.py start` (default 3, range 1-20). Override with `--max-turns N`. |

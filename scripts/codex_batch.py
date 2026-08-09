@@ -56,6 +56,7 @@ WRAPPER = BIN_DIR / "invoke_codex_with_claude.py"
 sys.path.insert(0, str(BIN_DIR))
 from codex_config import (  # noqa: E402
     ensure_setup_complete,
+    subprocess_timeout_for,
     t,
 )
 from codex_config import (
@@ -168,6 +169,10 @@ def _run_wrapper(sub_mode: str, task: dict[str, Any], batch_id: str) -> tuple[st
         env["CODEX_BATCH_ID"] = batch_id
         env["CODEX_BATCH_ITEM_ID"] = task_id
 
+        item_timeout = max(
+            ITEM_SAFETY_TIMEOUT,
+            subprocess_timeout_for("ask" if sub_mode == "batch-ask" else "delegate"),
+        )
         try:
             proc = subprocess.run(
                 cmd,
@@ -176,12 +181,12 @@ def _run_wrapper(sub_mode: str, task: dict[str, Any], batch_id: str) -> tuple[st
                 encoding="utf-8",
                 errors="replace",
                 env=env,
-                timeout=900,
+                timeout=item_timeout,
             )
         except subprocess.TimeoutExpired:
             return task_id, {
                 "status": "error",
-                "summary": t("batch.summary.timeout", timeout=ITEM_SAFETY_TIMEOUT),
+                "summary": t("batch.summary.timeout", timeout=item_timeout),
                 "duration_seconds": time.monotonic() - started,
                 "result": {},
             }
@@ -232,7 +237,7 @@ def _run_batch(sub_mode: str, batch: dict[str, Any]) -> dict[str, Any]:
             }
 
     max_parallel = int(batch.get("max_parallel") or DEFAULT_MAX_PARALLEL)
-    max_parallel = max(1, min(max_parallel, 8))
+    max_parallel = max(1, min(max_parallel, MAX_PARALLEL_CEILING))
 
     batch_id = uuid.uuid4().hex[:10]
 

@@ -194,6 +194,28 @@ def resolve_python() -> str:
     return sys.executable
 
 
+def subprocess_timeout_for(mode: str) -> float:
+    """How long a caller should wait for the wrapper running ``mode``.
+
+    Derived from the wrapper's own budget — its wall-clock ceiling times the
+    retry multiplier — plus a margin for context collection and teardown.
+    A hardcoded value here would silently become the real ceiling and kill
+    the wrapper mid-run whenever the per-mode timeout is raised.
+    """
+    timeouts = get("wrapper.mode_timeouts", {}) or {}
+    default = get("wrapper.default_timeout_seconds", 300.0)
+    raw = timeouts.get(mode, default) if isinstance(timeouts, dict) else default
+    try:
+        base = float(raw)
+    except (TypeError, ValueError):
+        base = 300.0
+    try:
+        multiplier = max(1.0, float(get("wrapper.total_deadline_multiplier", 1.5)))
+    except (TypeError, ValueError):
+        multiplier = 1.5
+    return base * multiplier + 90.0
+
+
 def ensure_setup_complete() -> None:
     """Auto-trigger the setup wizard the first time the skill is used in
     an interactive terminal.

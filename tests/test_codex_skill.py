@@ -1170,10 +1170,219 @@ def test_dialogue_lifecycle(r: Runner) -> None:
         r.eq(data.get("reason"), "dialogue_not_found", "reason=dialogue_not_found")
 
 
+def _verify_payload(tmp: Path) -> Path:
+    payload = tmp / "payload.json"
+    payload.write_text(
+        json.dumps(
+            {
+                "cwd": str(SKILL_DIR),
+                "last_assistant_message": "x",
+                "transcript_path": "",
+                "git_status_short": "",
+                "git_diff_worktree": "",
+                "git_diff_cached": "",
+                "changed_files_from_transcript": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return payload
+
+
+def test_model_and_service_tier(r: Runner) -> None:
+    r.section("model + service tier reach the Codex argv")
+    with _tempdir() as tmp:
+        payload = _verify_payload(tmp)
+        common = ["--cwd", str(SKILL_DIR), "--payload-file", str(payload)]
+
+        argv_log = tmp / "argv.json"
+        _run_wrapper(
+            "verify",
+            "success",
+            common,
+            extra_env={"FAKE_CODEX_ARGV_LOG_FILE": str(argv_log)},
+        )
+        if argv_log.exists():
+            argv = json.loads(argv_log.read_text(encoding="utf-8")).get("argv", [])
+            argv_str = " ".join(argv)
+            r.in_("-m", argv_str, "explicit -m is forwarded")
+            r.in_("service_tier=priority", argv_str, "fast service tier is forwarded")
+            r.in_("--json", argv_str, "event stream is on by default")
+        else:
+            r.fail("model+tier argv", "argv log not written")
+
+        argv_log_2 = tmp / "argv2.json"
+        _run_wrapper(
+            "verify",
+            "success",
+            common,
+            extra_env={
+                "FAKE_CODEX_ARGV_LOG_FILE": str(argv_log_2),
+                "CODEX_WRAPPER_MODEL": "fake-model-slug",
+                "CODEX_WRAPPER_SERVICE_TIER": "default",
+            },
+        )
+        if argv_log_2.exists():
+            argv_str = " ".join(json.loads(argv_log_2.read_text(encoding="utf-8")).get("argv", []))
+            r.in_("fake-model-slug", argv_str, "CODEX_WRAPPER_MODEL overrides the config")
+            r.in_("service_tier=default", argv_str, "CODEX_WRAPPER_SERVICE_TIER opts out of fast mode")
+        else:
+            r.fail("model override argv", "argv log not written")
+
+        argv_log_3 = tmp / "argv3.json"
+        _, stderr_3, _ = _run_wrapper(
+            "verify",
+            "success",
+            common + ["--reasoning-effort", "ultra"],
+            extra_env={"FAKE_CODEX_ARGV_LOG_FILE": str(argv_log_3)},
+        )
+        if argv_log_3.exists():
+            argv_str = " ".join(json.loads(argv_log_3.read_text(encoding="utf-8")).get("argv", []))
+            r.in_("model_reasoning_effort=ultra", argv_str, "ultra effort is accepted")
+            r.falsy("ultra" in stderr_3, "ultra effort emits no warning")
+        else:
+            r.fail("ultra effort argv", "argv log not written")
+
+
+def test_idle_timeout(r: Runner) -> None:
+    r.section("idle guard kills a silent Codex before the wall clock")
+    with _tempdir() as tmp:
+        payload = _verify_payload(tmp)
+        common = ["--cwd", str(SKILL_DIR), "--payload-file", str(payload)]
+
+        result, _stderr, elapsed = _run_wrapper(
+            "verify",
+            "idle_stall",
+            common,
+            timeout_env="60",
+            extra_env={"CODEX_WRAPPER_IDLE_TIMEOUT_SECONDS": "3"},
+            hard_timeout=45.0,
+        )
+        r.eq(result.get("status"), "error", "stalled run reports an error")
+        r.in_("no event", (result.get("summary") or "").lower(), "error names the idle guard")
+        r.le(elapsed, 30.0, "stalled run ends in seconds, not at the wall-clock ceiling")
+
+        result_ok, _stderr_ok, _elapsed_ok = _run_wrapper(
+            "verify",
+            "stream_slow",
+            common,
+            timeout_env="60",
+            extra_env={
+                "CODEX_WRAPPER_IDLE_TIMEOUT_SECONDS": "5",
+                "FAKE_CODEX_STREAM_EVENTS": "6",
+                "FAKE_CODEX_STREAM_GAP_SECONDS": "1",
+            },
+            hard_timeout=60.0,
+        )
+        r.eq(result_ok.get("status"), "ok", "streaming run is not killed by the idle guard")
+
+        result_nostream, _stderr_ns, _elapsed_ns = _run_wrapper(
+            "verify",
+            "delay_short",
+            common,
+            timeout_env="60",
+            extra_env={
+                "CODEX_WRAPPER_USE_JSON_STREAM": "0",
+                "CODEX_WRAPPER_IDLE_TIMEOUT_SECONDS": "2",
+            },
+            hard_timeout=45.0,
+        )
+        r.eq(result_nostream.get("status"), "ok", "idle guard is off when the stream is off")
+
+
+def test_heartbeat_reports_progress(r: Runner) -> None:
+    r.section("heartbeat exposes liveness, not just elapsed time")
+    with _tempdir() as tmp:
+        payload = _verify_payload(tmp)
+        _, stderr, _ = _run_wrapper(
+            "verify",
+            "stream_slow",
+            ["--cwd", str(SKILL_DIR), "--payload-file", str(payload)],
+            timeout_env="60",
+            extra_env={
+                "CODEX_WRAPPER_DISABLE_HEARTBEAT": "0",
+                "CODEX_WRAPPER_HEARTBEAT_INTERVAL_SECONDS": "1",
+                "FAKE_CODEX_STREAM_EVENTS": "6",
+                "FAKE_CODEX_STREAM_GAP_SECONDS": "1",
+            },
+            hard_timeout=60.0,
+        )
+        heartbeat_lines = [line for line in stderr.splitlines() if "[codex-heartbeat]" in line]
+        if heartbeat_lines:
+            joined = " ".join(heartbeat_lines)
+            r.in_("idle=", joined, "heartbeat reports seconds since the last event")
+            r.in_("events=", joined, "heartbeat reports the event count")
+            r.in_("last=", joined, "heartbeat reports the last event type")
+        else:
+            r.fail("heartbeat progress", "no heartbeat line captured")
+
+
+def test_output_schema_is_strict(r: Runner) -> None:
+    r.section("output schema satisfies strict structured output")
+    schema = json.loads((SKILL_DIR / "scripts" / "codex_output_schema.json").read_text(encoding="utf-8"))
+
+    def walk(node: Any, path: str) -> None:
+        if not isinstance(node, dict):
+            return
+        if node.get("type") == "object":
+            properties = node.get("properties") or {}
+            required = node.get("required") or []
+            missing = sorted(set(properties) - set(required))
+            r.falsy(missing, f"{path or 'root'}: every property is required (missing: {missing})")
+            r.truthy(node.get("additionalProperties") is False, f"{path or 'root'}: additionalProperties is false")
+            for name, child in properties.items():
+                walk(child, f"{path}.{name}" if path else name)
+        if node.get("type") == "array":
+            walk(node.get("items"), f"{path}[]")
+
+    walk(schema, "")
+
+
+def test_coverage_passthrough(r: Runner) -> None:
+    r.section("coverage survives normalization")
+    sys.path.insert(0, str(SKILL_DIR / "scripts"))
+    from normalize_codex_result import normalize
+
+    raw = json.dumps(
+        {
+            "severity": "medium",
+            "confidence": "high",
+            "summary": "s",
+            "findings": [],
+            "block_recommended": False,
+            "coverage": [
+                {"category": "assumptions", "findings_count": 2},
+                {"category": "testing", "findings_count": 0},
+                {"category": "", "findings_count": 1},
+                "not-an-object",
+            ],
+        }
+    )
+    result = normalize(raw, mode="plan-review")
+    coverage = result.get("coverage") or []
+    r.eq(len(coverage), 2, "malformed coverage entries are dropped")
+    r.eq(coverage[0].get("category"), "assumptions", "category is preserved")
+    r.eq(coverage[1].get("findings_count"), 0, "zero-finding categories are kept")
+
+    without = normalize(
+        json.dumps(
+            {
+                "severity": "low",
+                "confidence": "low",
+                "summary": "s",
+                "findings": [],
+                "block_recommended": False,
+            }
+        ),
+        mode="plan-review",
+    )
+    r.falsy("coverage" in without, "coverage is absent when Codex omits it")
+
+
 def test_reasoning_effort_override(r: Runner) -> None:
     r.section("--reasoning-effort overrides per-mode default")
     with _tempdir() as tmp:
-        # Case 1: --reasoning-effort high in verify mode (default would be medium).
+        # Case 1: --reasoning-effort high in verify mode.
         # We confirm that the argv received by Codex contains model_reasoning_effort=high.
         payload = tmp / "payload.json"
         payload.write_text(
@@ -1220,7 +1429,7 @@ def test_reasoning_effort_override(r: Runner) -> None:
         else:
             r.fail("verify+--reasoning-effort high", "argv log not written")
 
-        # Case 2: no --reasoning-effort in verify mode → keeps the medium default.
+        # Case 2: no --reasoning-effort in verify mode → keeps the per-mode default.
         argv_log_2 = tmp / "argv2.json"
         common_default = [
             "--cwd",
@@ -1237,9 +1446,9 @@ def test_reasoning_effort_override(r: Runner) -> None:
         if argv_log_2.exists():
             argv_str = " ".join(json.loads(argv_log_2.read_text(encoding="utf-8")).get("argv", []))
             r.in_(
-                "model_reasoning_effort=medium",
+                "model_reasoning_effort=high",
                 argv_str,
-                "verify default → medium preserved (no regression)",
+                "verify default → per-mode default preserved (no regression)",
             )
         else:
             r.fail("verify default", "argv log not written")
@@ -1263,7 +1472,7 @@ def test_reasoning_effort_override(r: Runner) -> None:
         if argv_log_3.exists():
             argv_str = " ".join(json.loads(argv_log_3.read_text(encoding="utf-8")).get("argv", []))
             r.in_(
-                "model_reasoning_effort=medium",
+                "model_reasoning_effort=high",
                 argv_str,
                 "invalid --reasoning-effort → falls back to per-mode default",
             )
@@ -1304,6 +1513,11 @@ def main() -> int:
     test_telemetry_rotation(r)
     test_ps1_stub(r)
     test_disable_heartbeat_silent(r)
+    test_heartbeat_reports_progress(r)
+    test_model_and_service_tier(r)
+    test_idle_timeout(r)
+    test_output_schema_is_strict(r)
+    test_coverage_passthrough(r)
     test_reasoning_effort_override(r)
     test_codex_config(r)
     test_analyze_plan_complexity(r)

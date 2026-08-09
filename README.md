@@ -16,15 +16,23 @@ telemetry).
 
 ## Modes
 
-| Mode             | Reasoning | Sandbox                | Timeout | Typical use                                                   |
+| Mode             | Reasoning | Sandbox                | Ceiling | Typical use                                                   |
 |------------------|-----------|------------------------|---------|---------------------------------------------------------------|
-| `plan-review`    | xhigh     | read-only              | 300s    | Review a plan before implementation                           |
-| `verify`         | medium    | read-only              | 180s    | Review an implementation through `git diff`                   |
-| `ask`            | medium    | read-only              | 120s    | Direct question / second opinion                              |
-| `insight`        | xhigh     | read-only              | 420s    | Holistic session retrospective                                |
-| `delegate`       | xhigh     | **danger-full-access** | 300s    | Codex executes a task (explicit confirmation required)        |
+| `plan-review`    | max       | read-only              | 900s    | Review a plan before implementation                           |
+| `verify`         | high      | read-only              | 600s    | Review an implementation through `git diff`                   |
+| `ask`            | medium    | read-only              | 300s    | Direct question / second opinion                              |
+| `insight`        | max       | read-only              | 1200s   | Holistic session retrospective                                |
+| `delegate`       | max       | **danger-full-access** | 900s    | Codex executes a task (explicit confirmation required)        |
 | `batch-ask`      | medium    | read-only              | —       | Up to 4 questions in parallel                                 |
-| `batch-delegate` | xhigh     | danger-full-access     | —       | Multiple parallel executions with declared write-set          |
+| `batch-delegate` | max       | danger-full-access     | —       | Multiple parallel executions with declared write-set          |
+
+Every mode runs on the strongest model the Codex CLI advertises, on the fast
+service tier. The ceiling is a backstop: runs are supervised through the Codex
+event stream and a Codex that stops emitting events for 180s is killed well
+before it, so raising the ceiling does not mean waiting on a hung process.
+`plan-review` and `verify` sweep a fixed checklist of categories and report
+`coverage` alongside the findings, so an empty category is visibly empty rather
+than silently unexamined.
 
 ## Installation
 

@@ -3,7 +3,7 @@
   "title": "ClaudeCodexReviewResult",
   "type": "object",
   "additionalProperties": false,
-  "required": ["severity", "confidence", "summary", "findings", "block_recommended"],
+  "required": ["severity", "confidence", "summary", "findings", "block_recommended", "coverage"],
   "properties": {
     "severity": {
       "type": "string",
@@ -48,6 +48,23 @@
     "block_recommended": {
       "type": "boolean",
       "description": "Only true when severity=high and confidence=high."
+    },
+    "coverage": {
+      "type": "array",
+      "description": "One entry per checklist category swept, including those with zero findings. Empty array in modes that have no checklist.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["category", "findings_count"],
+        "properties": {
+          "category": {
+            "type": "string"
+          },
+          "findings_count": {
+            "type": "integer"
+          }
+        }
+      }
     }
   }
 }

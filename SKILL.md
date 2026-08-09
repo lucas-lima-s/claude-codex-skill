@@ -30,13 +30,30 @@ manual user bypass, not an automation path.
 **Reasoning per mode** (controlled by the wrapper, do not override
 manually):
 
-| Mode | Reasoning | Sandbox | Default timeout |
+| Mode | Reasoning | Sandbox | Wall-clock ceiling |
 |---|---|---|---|
-| `plan-review` | `xhigh` | `read-only` | 300s |
-| `verify` | `medium` | `read-only` | 180s |
-| `ask` | `medium` | `read-only` | 120s |
-| `insight` | `xhigh` | `read-only` | 420s |
-| `delegate` | `xhigh` | `danger-full-access` | 300s |
+| `plan-review` | `max` | `read-only` | 900s |
+| `verify` | `high` | `read-only` | 600s |
+| `ask` | `medium` | `read-only` | 300s |
+| `insight` | `max` | `read-only` | 1200s |
+| `delegate` | `max` | `danger-full-access` | 900s |
+
+The model is chosen by the wrapper, not inherited from `~/.codex/config.toml`:
+`wrapper.model` defaults to `auto`, which resolves to the strongest model the
+Codex CLI currently advertises. Every mode runs on the fast service tier
+(`service_tier=priority`).
+
+The ceiling above is a backstop, not the expected duration. Runs are supervised
+through the Codex event stream, so a Codex that goes quiet for
+`wrapper.idle_timeout_seconds` (180s) is killed long before it. While a run is in
+flight the wrapper writes progress to stderr:
+
+```
+[codex-heartbeat] mode=plan-review phase=running elapsed=143s idle=12s events=8 last=reasoning
+```
+
+`idle` resets on every event, so `idle` climbing while `events` stays flat is the
+signal that Codex is stuck rather than thinking.
 
 **Natural-phrase → mode mapping** (Claude matches either language
 naturally; English is listed first as the documentation default,
@@ -440,6 +457,13 @@ English alongside.
    | severity | {S} |
    | confidence | {C} |
    | findings | {N} |
+   | coverage | {categories with findings}/{total categories} |
+
+   The `coverage` row only exists when the result carries a `coverage`
+   array (`plan-review` and `verify`). It is the proof that the review
+   swept every category rather than stopping at a comfortable number of
+   findings — never drop it, and never present a subset of the findings
+   because the list is long.
 
 3. Summary as a blockquote: `> {summary}`
 4. Findings as a numbered list:
@@ -487,9 +511,11 @@ summary as a blockquote, ask whether to retry.
   not omit, summarise, or group them.
 - Default reasoning is controlled by the wrapper per mode. Override
   only via the wrapper's explicit
-  `--reasoning-effort {low|medium|high|xhigh}` flag, **and only when
-  the user explicitly asked** (e.g. "review at max effort", "run on
-  low to be quick"). Do not pass `-c model_reasoning_effort=...`
-  directly on the Codex CLI.
+  `--reasoning-effort {low|medium|high|xhigh|max|ultra}` flag, **and
+  only when the user explicitly asked** (e.g. "review at ultra
+  effort", "run on low to be quick"). `ultra` lets Codex delegate
+  sub-tasks on its own, so its cost and duration are much less
+  predictable than `max` — mention that before using it. Do not pass
+  `-c model_reasoning_effort=...` directly on the Codex CLI.
 - ALWAYS render the presentation as markdown, NEVER inside a code
   fence — except `git status --short` output in `delegate` mode.

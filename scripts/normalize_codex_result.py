@@ -19,6 +19,7 @@ The output always conforms to::
         "fingerprint":        str,           # 16-hex; empty when findings=[]
         "raw_codex_output":   str,
         "mode":               "plan-review" | "verify" | "delegate",
+        "coverage":           [ {category, findings_count} ],   # optional
     }
 """
 
@@ -96,6 +97,23 @@ def _normalize_findings(raw_findings: Any) -> list[dict[str, str]]:
     return out
 
 
+def _normalize_coverage(raw_coverage: Any) -> list[dict[str, Any]]:
+    if not isinstance(raw_coverage, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for item in raw_coverage:
+        if not isinstance(item, dict):
+            continue
+        category = item.get("category")
+        if not isinstance(category, str) or not category.strip():
+            continue
+        count = item.get("findings_count")
+        if isinstance(count, bool) or not isinstance(count, int):
+            count = 0
+        out.append({"category": category, "findings_count": max(0, count)})
+    return out
+
+
 def _compute_fingerprint(findings: list[dict[str, str]], severity: str, block_recommended: bool) -> str:
     if not findings:
         return ""
@@ -153,6 +171,9 @@ def normalize(raw: str, mode: str) -> dict[str, Any]:
     summary = data.get("summary")
     result["summary"] = summary if isinstance(summary, str) else ""
     result["findings"] = _normalize_findings(data.get("findings"))
+    coverage = _normalize_coverage(data.get("coverage"))
+    if coverage:
+        result["coverage"] = coverage
 
     requested_block = bool(data.get("block_recommended"))
     if result["severity"] == "high" and result["confidence"] == "high":

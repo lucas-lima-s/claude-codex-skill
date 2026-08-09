@@ -6,6 +6,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Explicit model selection: `wrapper.model` (default `auto`) resolves the
+  strongest model the Codex CLI advertises and passes it as `codex exec -m`,
+  instead of inheriting whatever `~/.codex/config.toml` happens to hold.
+  Overridable per mode (`wrapper.mode_model`) or per run (`CODEX_WRAPPER_MODEL`).
+- Fast service tier (`service_tier=priority`) on every mode, with
+  `CODEX_WRAPPER_SERVICE_TIER=default` to opt out and a one-shot retry without
+  the flag if an account is refused the tier.
+- Idle guard: runs are supervised through the `codex exec --json` event stream
+  and killed after `wrapper.idle_timeout_seconds` (default 180) of complete
+  silence, which is what makes the raised wall-clock ceilings safe.
+- Heartbeat now reports liveness (`idle=`, `events=`, `last=`) instead of only
+  elapsed time and output size.
+- `coverage` in the review schema: `plan-review` and `verify` sweep a fixed
+  checklist of categories and report the finding count of each, including the
+  empty ones.
+- `codex_config.subprocess_timeout_for(mode)`: single source for how long a
+  caller should wait for the wrapper.
+- `CODEX_WRAPPER_IDLE_TIMEOUT_SECONDS` and
+  `CODEX_WRAPPER_HEARTBEAT_INTERVAL_SECONDS`.
+- `fake_codex.py` behaviours `stream_slow` and `idle_stall`, plus real JSONL
+  emission under `--json`.
+
+### Changed
+
+- Reasoning effort per mode: `plan-review`, `insight` and `delegate` to `max`,
+  `verify` to `high`. `max` and `ultra` are now valid `--reasoning-effort`
+  values (they were rejected despite the model supporting them).
+- Wall-clock ceilings raised: `plan-review` 300s → 900s, `verify` 180s → 600s,
+  `ask` 120s → 300s, `insight` 420s → 1200s, `delegate` 300s → 900s. Telemetry
+  showed `plan-review` runs dying exactly at the old 300s ceiling.
+- Both attempts of a run now share one deadline (`total_deadline_multiplier`),
+  so a retry can no longer silently double the wall-clock cost.
+- `codex exec --json` is on by default; `CODEX_WRAPPER_USE_JSON_STREAM=0` opts
+  out (it used to be `=1` to opt in).
+- Review prompts require exhaustiveness explicitly and forbid self-imposed
+  caps, ranking limits and merging distinct issues into one finding.
+- `codex_dialogue.py` and `codex_batch.py` derive their timeouts from the
+  wrapper's budget instead of hardcoding 600s and 900s.
+
+### Fixed
+
+- `codex_batch.py` ignored its own `ITEM_SAFETY_TIMEOUT` and
+  `MAX_PARALLEL_CEILING` constants, using literals instead.
+- With the event stream on, an empty output file fell back to the whole JSONL
+  transcript; it now falls back to the last agent message.
+
 ## [0.4.0] — 2026-04-30
 
 ### Phase 3 — Background runner + iterative review + complexity hint

@@ -15,6 +15,8 @@ with ``CODEX_WRAPPER_CODEX_OVERRIDE`` pointing here. Behavior is selected via
     timeout        Sleep ``FAKE_CODEX_TIMEOUT_SECONDS`` (default 9999).
     delay_short    Sleep 5s then succeed (under heartbeat threshold).
     delay_long     Sleep ``FAKE_CODEX_DELAY_SECONDS`` (default 35) then succeed.
+    stream_slow    Emit ``FAKE_CODEX_STREAM_EVENTS`` spaced events, then succeed.
+    idle_stall     Emit two events, then go silent forever (idle-timeout bait).
 
 We intentionally accept the same flag surface as the real Codex CLI so the
 wrapper can call us unchanged.
@@ -109,6 +111,25 @@ def _write(path: str | None, text: str) -> None:
     sys.stdout.flush()
 
 
+def _emit_event(payload: dict) -> None:
+    """Write one JSONL line the way the real CLI does under ``--json``."""
+    sys.stdout.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    sys.stdout.flush()
+
+
+def _emit_reasoning_events(count: int, gap: float) -> None:
+    _emit_event({"type": "thread.started", "thread_id": "fake-thread"})
+    _emit_event({"type": "turn.started"})
+    for index in range(count):
+        time.sleep(gap)
+        _emit_event(
+            {
+                "type": "item.completed",
+                "item": {"id": f"item_{index}", "type": "reasoning", "text": "**Fake reasoning step**"},
+            }
+        )
+
+
 def _detect_mode_hint(stdin_text: str) -> str:
     lowered = stdin_text.lower()
     if "perform the following work" in lowered:
@@ -150,6 +171,19 @@ def main() -> int:
     if behavior == "timeout":
         seconds = float(os.environ.get("FAKE_CODEX_TIMEOUT_SECONDS", "9999"))
         time.sleep(seconds)
+        return 0
+
+    if behavior == "idle_stall":
+        _emit_reasoning_events(1, float(os.environ.get("FAKE_CODEX_STREAM_GAP_SECONDS", "0.2")))
+        time.sleep(float(os.environ.get("FAKE_CODEX_TIMEOUT_SECONDS", "9999")))
+        return 0
+
+    if behavior == "stream_slow":
+        _emit_reasoning_events(
+            int(os.environ.get("FAKE_CODEX_STREAM_EVENTS", "4")),
+            float(os.environ.get("FAKE_CODEX_STREAM_GAP_SECONDS", "0.5")),
+        )
+        _write(args.output, json.dumps(_success_payload(mode_hint), ensure_ascii=False))
         return 0
 
     if behavior == "delay_short":

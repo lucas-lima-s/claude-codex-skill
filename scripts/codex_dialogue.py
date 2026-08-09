@@ -67,6 +67,7 @@ WRAPPER = BIN_DIR / "invoke_codex_with_claude.py"
 sys.path.insert(0, str(BIN_DIR))
 from codex_config import (  # noqa: E402
     ensure_setup_complete,
+    subprocess_timeout_for,
     t,
 )
 from codex_config import (
@@ -300,7 +301,7 @@ def _invoke_wrapper_plan_review(
             text=True,
             encoding="utf-8",
             errors="replace",
-            timeout=600,
+            timeout=subprocess_timeout_for("plan-review"),
         )
     except subprocess.TimeoutExpired:
         return {

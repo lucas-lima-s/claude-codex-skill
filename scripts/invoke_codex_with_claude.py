@@ -24,6 +24,7 @@ Canonical output (JSON, single line on stdout, UTF-8)::
         "raw_codex_output":  str,
         "mode":              one of the modes above,
         "duration_seconds":  float,
+        "coverage":          [ {category, findings_count} ],  (review modes)
         "degraded":          bool,                         (optional)
         "questions":         [ {id, question, context} ],  (status=needs_input)
         "files_created":     [str],                        (delegate only)
@@ -34,10 +35,15 @@ Canonical output (JSON, single line on stdout, UTF-8)::
     }
 
 Environment overrides:
-  * ``CODEX_WRAPPER_TIMEOUT_SECONDS``   — global override (per-mode default otherwise).
+  * ``CODEX_WRAPPER_TIMEOUT_SECONDS``   — global wall-clock override (per-mode default otherwise).
+  * ``CODEX_WRAPPER_IDLE_TIMEOUT_SECONDS`` — kill Codex after this many seconds
+    without a single stream event; ``0`` disables the idle guard.
+  * ``CODEX_WRAPPER_MODEL``             — model slug; overrides config (``auto`` resolves
+    the strongest model advertised by the Codex models cache).
+  * ``CODEX_WRAPPER_SERVICE_TIER``      — ``priority`` is the fast tier; ``default`` opts out.
   * ``CODEX_WRAPPER_CODEX_OVERRIDE``    — alternative ``codex`` script (testing).
   * ``CODEX_WRAPPER_DISABLE_HEARTBEAT`` — ``1`` silences the stderr heartbeat.
-  * ``CODEX_WRAPPER_USE_JSON_STREAM``   — ``1`` adds ``--json`` (experimental).
+  * ``CODEX_WRAPPER_USE_JSON_STREAM``   — ``0`` drops ``--json`` (and the idle guard with it).
   * ``CODEX_WRAPPER_TELEMETRY_DISABLED``— ``1`` skips writing ``cache/runs.jsonl``.
   * ``CLAUDE_AUTOMATION_PYTHON`` / ``SKILLS_PYTHON`` — Python interpreter.
   * Credentials propagated to the Codex subprocess are declared in
@@ -62,6 +68,7 @@ import tempfile
 import threading
 import time
 import uuid
+from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -91,31 +98,35 @@ TELEMETRY_BACKUP = CACHE_DIR / "runs.jsonl.1"
 TELEMETRY_MAX_BYTES = int(_config_get("wrapper.telemetry_max_bytes", 5 * 1024 * 1024))
 TELEMETRY_SCHEMA_VERSION = int(_config_get("wrapper.telemetry_schema_version", 1))
 
-DEFAULT_TIMEOUT_SECONDS = float(_config_get("wrapper.default_timeout_seconds", 120.0))
+DEFAULT_TIMEOUT_SECONDS = float(_config_get("wrapper.default_timeout_seconds", 300.0))
 
 MODE_TIMEOUTS: dict[str, float] = {
     k: float(v)
     for k, v in _config_get(
         "wrapper.mode_timeouts",
         {
-            "ask": 120.0,
-            "verify": 180.0,
-            "plan-review": 300.0,
-            "delegate": 300.0,
-            "insight": 420.0,
+            "ask": 300.0,
+            "verify": 600.0,
+            "plan-review": 900.0,
+            "delegate": 900.0,
+            "insight": 1200.0,
         },
     ).items()
 }
+
+IDLE_TIMEOUT_SECONDS = float(_config_get("wrapper.idle_timeout_seconds", 180.0))
+TOTAL_DEADLINE_MULTIPLIER = float(_config_get("wrapper.total_deadline_multiplier", 1.5))
+MIN_RETRY_BUDGET_SECONDS = 60.0
 
 MODE_REASONING: dict[str, str] = dict(
     _config_get(
         "wrapper.mode_reasoning",
         {
-            "plan-review": "xhigh",
-            "delegate": "xhigh",
-            "verify": "medium",
+            "plan-review": "max",
+            "delegate": "max",
+            "verify": "high",
             "ask": "medium",
-            "insight": "xhigh",
+            "insight": "max",
         },
     )
 )
@@ -123,12 +134,19 @@ MODE_REASONING: dict[str, str] = dict(
 VALID_REASONING_EFFORTS = tuple(
     _config_get(
         "wrapper.valid_reasoning_efforts",
-        ("low", "medium", "high", "xhigh"),
+        ("low", "medium", "high", "xhigh", "max", "ultra"),
     )
 )
 
+MODE_MODEL: dict[str, str] = dict(_config_get("wrapper.mode_model", {}))
+CONFIGURED_MODEL = str(_config_get("wrapper.model", "auto"))
+MODEL_FALLBACK = str(_config_get("wrapper.model_fallback", "gpt-5.6-sol"))
+MODELS_CACHE_PATH = str(_config_get("wrapper.models_cache_path", "~/.codex/models_cache.json"))
+SERVICE_TIER = str(_config_get("wrapper.service_tier", "priority"))
+
 REVIEW_MODES = ("plan-review", "verify", "ask", "insight")
 ALL_MODES = ("plan-review", "verify", "delegate", "ask", "insight")
+COVERAGE_MODES = ("plan-review", "verify")
 
 HEARTBEAT_INTERVAL = float(_config_get("wrapper.heartbeat_interval_seconds", 15.0))
 HEARTBEAT_JITTER = float(_config_get("wrapper.heartbeat_jitter_seconds", 2.0))
@@ -233,6 +251,47 @@ def _collect_context(cwd: Path, target_path: Path | None) -> str:
 
 # ------------------------------------------------------------------- PROMPTS
 
+EXHAUSTIVE_DIRECTIVE = (
+    "Be exhaustive. Report EVERY issue you find. There is no maximum number of findings — "
+    "do not cap the list, do not return only the most important ones, do not rank-limit, and "
+    "do not merge several distinct issues into a single finding. Conversely, do not split one "
+    "issue into several findings to inflate the count, and do not invent problems to fill a "
+    "category. Sweep every checklist category below one by one, and record each one in "
+    "`coverage` with how many findings it produced (0 is a valid and expected count).\n\n"
+)
+
+PLAN_REVIEW_CATEGORIES = (
+    ("assumptions", "flawed or unstated assumptions the plan depends on"),
+    ("edge-cases", "missed edge cases, failure modes and concurrency hazards"),
+    ("risky-operations", "risky or irreversible operations: data loss, migrations, deploys, deletions"),
+    ("project-conventions", "contradictions with the project's own conventions in the CLAUDE.md context"),
+    ("ordering", "ordering and dependencies between steps; work that cannot run in the stated sequence"),
+    ("testing", "testing gaps against the plan's own stated acceptance criteria"),
+    ("rollback", "rollback, recovery and what happens if the change must be undone"),
+    ("security", "security, authorization, tenancy and data exposure"),
+    ("performance", "performance and behaviour at scale"),
+    ("observability", "observability and operability: logs, metrics, diagnosing it in production"),
+    ("scope", "scope beyond what was asked, or requested scope silently dropped"),
+)
+
+VERIFY_CATEGORIES = (
+    ("correctness", "logic errors and regressions introduced by the diff"),
+    ("edge-cases", "unhandled edge cases, error paths and concurrency hazards"),
+    ("project-conventions", "contradictions with the project's own conventions in the CLAUDE.md context"),
+    ("testing", "missing or vacuous tests for the behaviour that changed"),
+    ("security", "security, authorization, tenancy and data exposure"),
+    ("performance", "performance and behaviour at scale"),
+    ("error-handling", "swallowed errors, silent failures and missing validation"),
+    ("observability", "observability and operability of the new code"),
+    ("dead-code", "leftovers: dead code, stray debug output, unused imports, TODOs"),
+    ("scope", "changes beyond what the turn was supposed to do, or stated work not actually done"),
+)
+
+
+def _checklist_block(categories: tuple[tuple[str, str], ...]) -> str:
+    lines = "\n".join(f"- `{name}`: {description}" for name, description in categories)
+    return f"Checklist categories (sweep each one):\n{lines}\n"
+
 
 def _build_prompt(
     mode: str,
@@ -256,6 +315,13 @@ def _build_prompt(
         '`status="needs_input"` and provide concrete `questions` '
         "(each as {id, question, context}).\n"
     )
+    if mode in COVERAGE_MODES:
+        header += (
+            "- `coverage` is one entry per checklist category, each as "
+            "{category, findings_count}, including the categories that produced none.\n"
+        )
+    else:
+        header += "- `coverage` does not apply to this mode; return it as an empty array.\n"
 
     language_directive = t("prompt.language_directive")
     if language_directive and language_directive != "prompt.language_directive":
@@ -263,17 +329,21 @@ def _build_prompt(
 
     if mode == "plan-review":
         body = (
-            "Task: Review Claude's plan below. Look for flawed assumptions, missed edge cases, "
-            "risky operations, and contradictions with the CLAUDE.md context.\n\n"
-            "--- Claude's plan ---\n" + user_payload
+            "Task: Review Claude's plan below.\n\n"
+            + EXHAUSTIVE_DIRECTIVE
+            + _checklist_block(PLAN_REVIEW_CATEGORIES)
+            + "\n--- Claude's plan ---\n"
+            + user_payload
         )
     elif mode == "verify":
         body = (
-            "Task: Review Claude's implementation turn (already applied to the filesystem) for regressions, "
-            "missing tests, anti-patterns, and contradictions with the CLAUDE.md context. The payload below "
+            "Task: Review Claude's implementation turn (already applied to the filesystem). The payload below "
             "includes the last assistant message, git status/diffs, and changed files reconstructed from the "
             "transcript.\n\n"
-            "--- Implementation turn payload (JSON) ---\n" + user_payload
+            + EXHAUSTIVE_DIRECTIVE
+            + _checklist_block(VERIFY_CATEGORIES)
+            + "\n--- Implementation turn payload (JSON) ---\n"
+            + user_payload
         )
     elif mode == "ask":
         body = (
@@ -335,11 +405,72 @@ def _codex_base_cmd() -> list[str]:
     return [resolved, "exec"]
 
 
+def _strongest_model_from_cache() -> str | None:
+    """Pick the strongest model Codex currently advertises.
+
+    Reads the CLI's own models cache and returns the lowest ``priority``
+    entry that is user-selectable, callable through the API and not flagged
+    for migration. The cache format is internal to Codex and has already
+    changed between releases, so every failure path is silent — the caller
+    falls back to the configured slug.
+    """
+    try:
+        raw = Path(os.path.expanduser(MODELS_CACHE_PATH)).read_text(encoding="utf-8")
+        models = json.loads(raw).get("models")
+    except (OSError, ValueError, AttributeError):
+        return None
+    if not isinstance(models, list):
+        return None
+
+    best_slug: str | None = None
+    best_priority: float = float("inf")
+    for entry in models:
+        if not isinstance(entry, dict):
+            continue
+        slug = entry.get("slug")
+        if not isinstance(slug, str) or not slug:
+            continue
+        if entry.get("visibility") != "list" or entry.get("supported_in_api") is not True:
+            continue
+        if entry.get("upgrade"):
+            continue
+        raw_priority = entry.get("priority")
+        if not isinstance(raw_priority, (int, float)) or isinstance(raw_priority, bool):
+            continue
+        priority = float(raw_priority)
+        if priority < best_priority:
+            best_priority = priority
+            best_slug = slug
+    return best_slug
+
+
+def _resolve_model(mode: str) -> str:
+    env_model = os.environ.get("CODEX_WRAPPER_MODEL", "").strip()
+    if env_model:
+        return env_model
+    mode_model = str(MODE_MODEL.get(mode, "")).strip()
+    if mode_model:
+        return mode_model
+    if CONFIGURED_MODEL and CONFIGURED_MODEL != "auto":
+        return CONFIGURED_MODEL
+    return _strongest_model_from_cache() or MODEL_FALLBACK
+
+
+def _resolve_service_tier() -> str:
+    env_tier = os.environ.get("CODEX_WRAPPER_SERVICE_TIER", "").strip()
+    return env_tier or SERVICE_TIER
+
+
+def _json_stream_enabled() -> bool:
+    return os.environ.get("CODEX_WRAPPER_USE_JSON_STREAM", "1") != "0"
+
+
 def _build_codex_command(
     mode: str,
     cwd: Path,
     output_file: Path,
     effort_override: str | None = None,
+    with_service_tier: bool = True,
 ) -> list[str]:
     base = _codex_base_cmd()
     if not base:
@@ -361,15 +492,61 @@ def _build_codex_command(
         "-o",
         str(output_file),
     ]
+    model = _resolve_model(mode)
+    if model:
+        cmd += ["-m", model]
     effort = effort_override or MODE_REASONING.get(mode)
     if effort:
         cmd += ["-c", f"model_reasoning_effort={effort}"]
+    tier = _resolve_service_tier()
+    if with_service_tier and tier:
+        cmd += ["-c", f"service_tier={tier}"]
     if mode in REVIEW_MODES and SCHEMA_FILE.exists():
         cmd += ["--output-schema", str(SCHEMA_FILE)]
-    if os.environ.get("CODEX_WRAPPER_USE_JSON_STREAM") == "1":
+    if _json_stream_enabled():
         cmd.append("--json")
     cmd.append("-")
     return cmd
+
+
+# ---------------------------------------------------------------- PROGRESS
+
+
+class _Progress:
+    """Liveness state fed by the Codex ``--json`` event stream.
+
+    A Codex run can spend minutes reasoning without writing a single byte to
+    the output file, so file size alone cannot tell "still thinking" from
+    "hung". Every JSONL event the CLI emits refreshes ``last_event_at``,
+    which turns the wall-clock timeout into a fallback and makes silence
+    itself the thing we measure.
+
+    Only surface tags are kept (event type, counter). The reasoning text
+    that rides along in the stream is never stored nor printed.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._last_event_at = time.monotonic()
+        self.event_count = 0
+        self.last_event_type = "none"
+        self.last_agent_message = ""
+
+    def record(self, event_type: str, agent_message: str | None = None) -> None:
+        with self._lock:
+            self._last_event_at = time.monotonic()
+            self.event_count += 1
+            self.last_event_type = event_type or "unknown"
+            if agent_message:
+                self.last_agent_message = agent_message
+
+    def touch(self) -> None:
+        with self._lock:
+            self._last_event_at = time.monotonic()
+
+    def idle_seconds(self) -> float:
+        with self._lock:
+            return max(0.0, time.monotonic() - self._last_event_at)
 
 
 # --------------------------------------------------------------- HEARTBEAT
@@ -389,6 +566,7 @@ class _Heartbeat:
         self.started_at = started_at
         self.output_path = output_path
         self.phase = "starting"
+        self.progress: _Progress | None = None
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._enabled = os.environ.get("CODEX_WRAPPER_DISABLE_HEARTBEAT") != "1"
@@ -413,9 +591,20 @@ class _Heartbeat:
         except OSError:
             return 0
 
+    def _resolve_interval(self) -> float:
+        raw = os.environ.get("CODEX_WRAPPER_HEARTBEAT_INTERVAL_SECONDS")
+        if raw:
+            try:
+                return max(0.1, float(raw))
+            except ValueError:
+                pass
+        return HEARTBEAT_INTERVAL
+
     def _loop(self) -> None:
+        base_interval = self._resolve_interval()
+        jitter = min(HEARTBEAT_JITTER, base_interval / 2)
         while not self._stop.is_set():
-            interval = HEARTBEAT_INTERVAL + random.uniform(-HEARTBEAT_JITTER, HEARTBEAT_JITTER)
+            interval = base_interval + random.uniform(-jitter, jitter)
             if self._stop.wait(timeout=interval):
                 return
             elapsed = time.monotonic() - self.started_at
@@ -423,6 +612,12 @@ class _Heartbeat:
                 f"[codex-heartbeat] mode={self.mode} phase={self.phase} "
                 f"elapsed={elapsed:.0f}s packet_bytes={self._packet_bytes()}"
             )
+            progress = self.progress
+            if progress is not None:
+                line += (
+                    f" idle={progress.idle_seconds():.0f}s "
+                    f"events={progress.event_count} last={progress.last_event_type}"
+                )
             try:
                 print(line, file=sys.stderr, flush=True)
             except OSError:
@@ -472,6 +667,134 @@ def _kill_process_tree(pid: int) -> None:
 
 # --------------------------------------------------------------- INVOCATION
 
+MAX_CAPTURED_STDOUT_BYTES = 2 * 1024 * 1024
+MAX_CAPTURED_STDERR_LINES = 50
+SERVICE_TIER_ERROR_MARKERS = ("service_tier", "service tier")
+
+
+def _resolve_idle_timeout() -> float:
+    raw = os.environ.get("CODEX_WRAPPER_IDLE_TIMEOUT_SECONDS")
+    if raw:
+        try:
+            return max(0.0, float(raw))
+        except ValueError:
+            pass
+    return IDLE_TIMEOUT_SECONDS
+
+
+def _classify_stream_event(line: str) -> tuple[str | None, str | None]:
+    """Map one ``--json`` line to (event tag, agent message).
+
+    Returns ``(None, None)`` for anything that is not a Codex event object,
+    so plain output still counts as liveness without being mistaken for a
+    structured event.
+    """
+    try:
+        data = json.loads(line)
+    except ValueError:
+        return None, None
+    if not isinstance(data, dict):
+        return None, None
+    event_type = data.get("type")
+    if not isinstance(event_type, str) or not event_type:
+        return None, None
+
+    label = event_type
+    message: str | None = None
+    item = data.get("item")
+    if isinstance(item, dict):
+        item_type = item.get("type")
+        if isinstance(item_type, str) and item_type:
+            label = item_type
+        if item_type == "agent_message":
+            text_value = item.get("text")
+            if isinstance(text_value, str) and text_value.strip():
+                message = text_value
+    return label, message
+
+
+def _pump_stdout(stream: Any, progress: _Progress, chunks: list[str]) -> None:
+    captured = 0
+    try:
+        for line in stream:
+            event_type, message = _classify_stream_event(line.strip())
+            progress.record(event_type or "output", message)
+            if captured < MAX_CAPTURED_STDOUT_BYTES:
+                chunks.append(line)
+                captured += len(line)
+    except (OSError, ValueError):
+        pass
+    finally:
+        try:
+            stream.close()
+        except OSError:
+            pass
+
+
+def _pump_stderr(stream: Any, lines: deque[str]) -> None:
+    try:
+        for line in stream:
+            lines.append(line)
+    except (OSError, ValueError):
+        pass
+    finally:
+        try:
+            stream.close()
+        except OSError:
+            pass
+
+
+def _feed_stdin(stream: Any, prompt: str) -> None:
+    try:
+        stream.write(prompt)
+        stream.flush()
+    except (OSError, ValueError):
+        pass
+    finally:
+        try:
+            stream.close()
+        except (OSError, ValueError):
+            pass
+
+
+def _terminate(proc: subprocess.Popen) -> None:
+    _kill_process_tree(proc.pid)
+    try:
+        proc.kill()
+    except OSError:
+        pass
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        pass
+
+
+def _supervise(
+    proc: subprocess.Popen,
+    progress: _Progress,
+    heartbeat: _Heartbeat,
+    timeout: float,
+    idle_limit: float,
+) -> str | None:
+    """Wait for Codex, watching both the wall clock and the event stream.
+
+    Returns None on a natural exit, or the reason the process was killed:
+    ``timeout`` (wall clock) or ``idle`` (no stream event for too long).
+    """
+    deadline = time.monotonic() + timeout
+    while proc.poll() is None:
+        now = time.monotonic()
+        if now >= deadline:
+            heartbeat.set_phase("timeout")
+            _terminate(proc)
+            return "timeout"
+        if idle_limit > 0 and progress.idle_seconds() > idle_limit:
+            heartbeat.set_phase("idle-timeout")
+            _terminate(proc)
+            return "idle"
+        time.sleep(0.25)
+    return None
+
 
 def _run_codex_once(
     mode: str,
@@ -480,13 +803,19 @@ def _run_codex_once(
     timeout: float,
     heartbeat: _Heartbeat,
     effort_override: str | None = None,
-) -> tuple[str, int, str | None]:
-    """Run Codex once. Returns (raw_output, exit_code, error_summary).
+    with_service_tier: bool = True,
+) -> tuple[str, int, str | None, str]:
+    """Run Codex once. Returns (raw_output, exit_code, error_summary, stderr_tail).
 
     ``error_summary`` is None on a clean run (regardless of Codex content);
-    populated only when the subprocess could not run, timed out, or exited
-    with a non-zero status. ``raw_output`` is the captured payload (file +
-    stdout fallback) — may be empty.
+    populated only when the subprocess could not run, timed out, went silent
+    past the idle limit, or exited with a non-zero status. ``raw_output`` is
+    the captured payload (output file, then the stream fallback) — may be
+    empty.
+
+    The run is supervised rather than simply awaited: stdout is consumed as
+    it arrives so a stalled Codex is killed by silence long before the
+    wall-clock ceiling, and so the heartbeat can report what it is doing.
     """
     with tempfile.NamedTemporaryFile(
         prefix="codex-out-", suffix=".txt", delete=False, mode="w", encoding="utf-8"
@@ -495,9 +824,15 @@ def _run_codex_once(
 
     try:
         heartbeat.output_path = out_path
-        cmd = _build_codex_command(mode, cwd, out_path, effort_override=effort_override)
+        cmd = _build_codex_command(
+            mode,
+            cwd,
+            out_path,
+            effort_override=effort_override,
+            with_service_tier=with_service_tier,
+        )
         if not cmd:
-            return "", -1, t("wrapper.error.codex_unavailable")
+            return "", -1, t("wrapper.error.codex_unavailable"), ""
 
         try:
             proc = subprocess.Popen(
@@ -508,28 +843,47 @@ def _run_codex_once(
                 text=True,
                 encoding="utf-8",
                 errors="replace",
+                bufsize=1,
                 env=_codex_child_env(),
             )
         except (FileNotFoundError, OSError) as exc:
-            return "", -1, t("wrapper.error.process_start", exc=exc.__class__.__name__)
+            return "", -1, t("wrapper.error.process_start", exc=exc.__class__.__name__), ""
 
+        progress = _Progress()
+        heartbeat.progress = progress
         heartbeat.set_phase("running")
-        try:
-            stdout, _stderr = proc.communicate(input=prompt, timeout=timeout)
-        except subprocess.TimeoutExpired:
-            heartbeat.set_phase("timeout")
-            _kill_process_tree(proc.pid)
-            try:
-                proc.kill()
-            except OSError:
-                pass
-            try:
-                proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                pass
-            return "", -1, t("wrapper.error.timeout", timeout=timeout)
-        except OSError as exc:
-            return "", -1, t("wrapper.error.io", exc=exc.__class__.__name__)
+
+        stdout_chunks: list[str] = []
+        stderr_lines: deque[str] = deque(maxlen=MAX_CAPTURED_STDERR_LINES)
+        workers = [
+            threading.Thread(target=_feed_stdin, args=(proc.stdin, prompt), daemon=True),
+            threading.Thread(target=_pump_stdout, args=(proc.stdout, progress, stdout_chunks), daemon=True),
+            threading.Thread(target=_pump_stderr, args=(proc.stderr, stderr_lines), daemon=True),
+        ]
+        for worker in workers:
+            worker.start()
+
+        idle_limit = _resolve_idle_timeout() if _json_stream_enabled() else 0.0
+        started_at = time.monotonic()
+        kill_reason = _supervise(proc, progress, heartbeat, timeout, idle_limit)
+        for worker in workers:
+            worker.join(timeout=5)
+        stderr_tail = "".join(stderr_lines)
+
+        if kill_reason == "timeout":
+            return "", -1, t("wrapper.error.timeout", timeout=timeout), stderr_tail
+        if kill_reason == "idle":
+            return (
+                "",
+                -1,
+                t(
+                    "wrapper.error.idle_timeout",
+                    idle=progress.idle_seconds(),
+                    limit=idle_limit,
+                    elapsed=time.monotonic() - started_at,
+                ),
+                stderr_tail,
+            )
 
         raw_output = ""
         try:
@@ -538,7 +892,7 @@ def _run_codex_once(
         except OSError:
             raw_output = ""
         if not raw_output:
-            raw_output = stdout or ""
+            raw_output = progress.last_agent_message or "".join(stdout_chunks)
 
         if proc.returncode != 0:
             return (
@@ -548,14 +902,56 @@ def _run_codex_once(
                     "wrapper.error.nonzero",
                     code=proc.returncode,
                 ),
+                stderr_tail,
             )
         heartbeat.set_phase("parsing")
-        return raw_output, proc.returncode, None
+        return raw_output, proc.returncode, None, stderr_tail
     finally:
         try:
             out_path.unlink(missing_ok=True)
         except OSError:
             pass
+
+
+def _looks_like_service_tier_error(stderr_tail: str) -> bool:
+    lowered = stderr_tail.lower()
+    return any(marker in lowered for marker in SERVICE_TIER_ERROR_MARKERS)
+
+
+def _run_codex(
+    mode: str,
+    prompt: str,
+    cwd: Path,
+    timeout: float,
+    heartbeat: _Heartbeat,
+    effort_override: str | None = None,
+) -> tuple[str, int, str | None]:
+    """Run Codex, retrying once without the fast service tier if it is refused.
+
+    An account that loses access to the priority tier would otherwise fail
+    every single review; the extra attempt only ever happens on failure.
+    """
+    raw, exit_code, err, stderr_tail = _run_codex_once(
+        mode,
+        prompt,
+        cwd,
+        timeout,
+        heartbeat,
+        effort_override=effort_override,
+    )
+    tier_refused = err is not None and exit_code != 0 and _looks_like_service_tier_error(stderr_tail)
+    if tier_refused and _resolve_service_tier():
+        heartbeat.set_phase("retrying-without-service-tier")
+        raw, exit_code, err, _ = _run_codex_once(
+            mode,
+            prompt,
+            cwd,
+            timeout,
+            heartbeat,
+            effort_override=effort_override,
+            with_service_tier=False,
+        )
+    return raw, exit_code, err
 
 
 def _wants_retry(mode: str, normalized: dict[str, Any]) -> bool:
@@ -690,10 +1086,15 @@ def _invoke_codex(
 ) -> tuple[dict[str, Any], int, int]:
     """Run Codex with one optional retry on JSON parse failure.
 
+    Both attempts share a single deadline (``timeout`` times the configured
+    multiplier), so a retry can never silently double the wall-clock cost of
+    a run.
+
     Returns ``(normalized_result, retry_count, last_exit_code)``.
     """
     started_at = time.monotonic()
-    raw, exit_code, err = _run_codex_once(
+    hard_deadline = started_at + timeout * max(1.0, TOTAL_DEADLINE_MULTIPLIER)
+    raw, exit_code, err = _run_codex(
         mode,
         prompt,
         cwd,
@@ -712,14 +1113,16 @@ def _invoke_codex(
         _enrich_delegate_fields(normalized, raw_data)
         _enrich_needs_input(normalized, raw_data)
 
-    if _wants_retry(mode, normalized):
+    remaining = hard_deadline - time.monotonic()
+    retry_budget = min(MIN_RETRY_BUDGET_SECONDS, timeout)
+    if _wants_retry(mode, normalized) and remaining >= retry_budget:
         heartbeat.set_phase("retrying")
         retry_prompt = prompt + "\n\n--- Retry instruction ---\n" + RETRY_INSTRUCTION
-        raw2, exit_code2, err2 = _run_codex_once(
+        raw2, exit_code2, err2 = _run_codex(
             mode,
             retry_prompt,
             cwd,
-            timeout,
+            min(timeout, remaining),
             heartbeat,
             effort_override=effort_override,
         )
