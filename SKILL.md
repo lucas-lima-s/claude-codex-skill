@@ -2,6 +2,8 @@
 name: codex
 description: Delegate one of five operations to Codex — review a plan (plan-review), verify an implementation via git diff (verify), answer a question/opinion (ask), produce a holistic session retrospective (insight), or execute a task (delegate). Use this skill ALWAYS when the user says any of these phrases (English — "review this plan with codex", "have codex review", "ask codex what it thinks", "second opinion from codex", "verify my implementation with codex", "have codex look at what I did", "delegate to codex", "send it to codex", "do a session insight", "retrospective with codex"; or pt-BR equivalents like "revise esse plano com o codex", "pergunte ao codex o que ele acha", "verifica minha implementação com o codex", "manda o codex fazer", "delega ao codex", "faz um insight da sessão"). This skill is the ONLY entry point to invoke Codex automatically — do not use the /codex:* plugin. For `delegate` mode, ALWAYS confirm with the user before running because Codex runs with `--sandbox danger-full-access` and can edit/delete files inside or outside the workspace.
 argument-hint: plan-review|plan-review-iter|verify|ask|insight|delegate|batch-ask|batch-delegate|bg-start|bg-status|bg-output|bg-cancel|bg-list [args]
+model: haiku
+context: fork
 allowed-tools:
   - Read
   - Write
