@@ -6,7 +6,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **A failed run could be reported as a clean review.** Four independent
+  defects composed into one silent failure: `plan-review` over a 38.5 KB plan
+  produced zero findings across three attempts, and none of them surfaced an
+  error. All four are closed:
+  - Every entry point now mirrors `status` in its exit code (`0` ok, `2`
+    error, `3` needs_input) instead of always returning `0` — the wrapper,
+    `codex_bg.py`, `codex_dialogue.py` and `codex_batch.py`, the last of which
+    also treats `partial` as non-zero because some item was not done. The JSON
+    still goes to stdout first, so parsing callers are unaffected. Shared
+    contract in `codex_config.exit_code_for_status`.
+  - `codex_bg.py start` validates the mode against `wrapper.modes` before
+    spawning anything. `plan-review-iter` and `batch-*` are composed flows,
+    not wrapper modes, and are now refused with `reason=invalid_mode` instead
+    of dying inside the wrapper's argparse where nothing observed it.
+  - `codex_bg.py start` probes the spawned process for
+    `background.startup_probe_seconds` (3s) and returns
+    `reason=died_on_startup` with the captured `stderr_tail` rather than a
+    `run_id` for a process that is already gone.
+  - `codex_dialogue.py` no longer emits envelope `status: ok` over a turn
+    whose wrapper failed, and `_stop_signal` no longer counts a failed turn
+    as clean — two consecutive timeouts used to be read as convergence.
+
 ### Added
+
+- **Wall-clock ceiling scales with the target.** `wrapper.mode_timeouts` is now
+  a floor; the wrapper raises its own ceiling with the byte size of the prompt
+  it assembled, up to `wrapper.scale_ceiling_multiplier` (4x). New keys:
+  `wrapper.scale_free_bytes`, `wrapper.scale_bytes_per_unit`,
+  `wrapper.scale_ceiling_multiplier`. `codex_config.subprocess_timeout_for`
+  budgets against that ceiling, so a supervisor never kills a wrapper that is
+  still inside its own budget.
+- **`plan-review-split`: large plans reviewed per phase, in parallel.**
+  `split_plan_by_phase.py` slices a phased plan into one file per phase plus a
+  **coherence slice** carrying the whole plan under a structure-only
+  instruction — ordering, cross-phase dependencies, contradictions, boundary
+  gaps — which is what plain slicing would lose. A plan with no phase headings
+  returns `not_splittable` and falls back to the monolithic review.
+- **`batch-plan-review` sub-mode** in `codex_batch.py`, running each slice as a
+  real `plan-review` (not `ask`, which would drop the checklist and the
+  reasoning effort). Adds an `aggregate` block: findings deduplicated by
+  `(title, location)` keeping the highest severity and recording every source
+  slice, `coverage` unioned, `block_recommended` as `any()`.
+- `analyze_plan_complexity.py` now returns a `metrics` block with the raw
+  counts (`size_bytes`, `distinct_files`, `phases`, `sensitive_hits`,
+  `cross_module_hits`) and a `suggest_split` flag, driven by
+  `complexity.split_phases_threshold` (4) and
+  `complexity.split_size_threshold_bytes` (16 KB).
+- `wrapper.modes` in the config as the single canonical mode list, read by both
+  the wrapper and `codex_bg.py`.
+
+### Changed
+
+- `codex_bg.py` honours `CODEX_WRAPPER_CACHE_DIR` for its `bg_runs/`
+  directories, mirroring the wrapper. `tests/test_codex_bg.py` now points at a
+  temp sandbox: its runs against `fake_codex.py` were being written into the
+  real `cache/runs.jsonl`, indistinguishable from production rows.
 
 - Explicit model selection: `wrapper.model` (default `auto`) resolves the
   strongest model the Codex CLI advertises and passes it as `codex exec -m`,

@@ -36,7 +36,10 @@ SCRIPTS = SKILL_DIR / "scripts"
 WRAPPER = SCRIPTS / "invoke_codex_with_claude.py"
 BG_SCRIPT = SCRIPTS / "codex_bg.py"
 FAKE = THIS_DIR / "fake_codex.py"
-BG_RUNS_DIR = SKILL_DIR / "cache" / "bg_runs"
+# Never the real cache: run directories and runs.jsonl rows produced against
+# the fake Codex would otherwise be indistinguishable from production runs.
+CACHE_SANDBOX = Path(tempfile.mkdtemp(prefix="codex-test-bgcache-"))
+BG_RUNS_DIR = CACHE_SANDBOX / "bg_runs"
 
 
 def _resolve_python() -> str:
@@ -122,12 +125,17 @@ def _bg_env(behavior: str = "success", extra: dict[str, str] | None = None) -> d
     env["CODEX_WRAPPER_TIMEOUT_SECONDS"] = "60"
     env["CODEX_WRAPPER_DISABLE_HEARTBEAT"] = "1"
     env["FAKE_CODEX_BEHAVIOR"] = behavior
+    env["CODEX_WRAPPER_CACHE_DIR"] = str(CACHE_SANDBOX)
     if extra:
         env.update(extra)
     return env
 
 
+_LAST_RETURNCODE = 0
+
+
 def _run_bg(args: list[str], env: dict[str, str] | None = None, timeout: float = 30.0) -> tuple[dict[str, Any], str]:
+    global _LAST_RETURNCODE
     cmd = [PYTHON, str(BG_SCRIPT), *args]
     proc = subprocess.run(
         cmd,
@@ -138,6 +146,7 @@ def _run_bg(args: list[str], env: dict[str, str] | None = None, timeout: float =
         errors="replace",
         timeout=timeout,
     )
+    _LAST_RETURNCODE = proc.returncode
     try:
         result = json.loads(proc.stdout or "{}")
     except json.JSONDecodeError:
@@ -366,6 +375,55 @@ def test_status_not_found(r: Runner) -> None:
     r.eq(res.get("status"), "error", "unknown run_id → status=error")
     r.eq(res.get("reason"), "not_found", "reason=not_found")
 
+    listing, _ = _run_bg(["list", "--limit", "5"], env=_bg_env())
+    r.eq(listing.get("status"), "ok", "list of an empty cache is still a success")
+    r.eq(_LAST_RETURNCODE, 0, "a successful subcommand exits zero")
+
+
+def test_invalid_mode(r: Runner) -> None:
+    r.section("bg start × modo que não existe no wrapper")
+    _purge_bg_runs()
+    env = _bg_env()
+
+    res, _ = _run_bg(["start", "plan-review-iter", "--cwd", str(SKILL_DIR)], env=env)
+    r.eq(res.get("status"), "error", "plan-review-iter → status=error")
+    r.eq(_LAST_RETURNCODE, 2, "an invalid mode also exits non-zero")
+    r.eq(res.get("reason"), "invalid_mode", "reason=invalid_mode")
+    r.in_("plan-review", res.get("valid_modes") or [], "valid_modes lists the wrapper modes")
+    r.truthy(res.get("run_id") is None, "no run_id handed out for an invalid mode")
+
+    created = list(BG_RUNS_DIR.iterdir()) if BG_RUNS_DIR.exists() else []
+    r.eq(len(created), 0, "no run directory created for an invalid mode")
+
+    res, _ = _run_bg(["start", "batch-ask", "--cwd", str(SKILL_DIR)], env=env)
+    r.eq(res.get("reason"), "invalid_mode", "batch-ask is also rejected")
+
+
+def test_died_on_startup(r: Runner) -> None:
+    r.section("bg start × wrapper morre no arranque")
+    _purge_bg_runs()
+    env = _bg_env()
+
+    # An unknown flag is forwarded to the wrapper, whose argparse rejects it
+    # and exits before writing a single byte of JSON.
+    res, _ = _run_bg(
+        ["start", "ask", "--cwd", str(SKILL_DIR), "--flag-that-does-not-exist"],
+        env=env,
+        timeout=40.0,
+    )
+    r.eq(res.get("status"), "error", "dead wrapper → status=error")
+    r.eq(_LAST_RETURNCODE, 2, "a dead wrapper also exits non-zero")
+    r.eq(res.get("reason"), "died_on_startup", "reason=died_on_startup")
+    r.truthy(res.get("run_id") is None or res.get("stderr_tail"), "stderr is surfaced to the caller")
+    r.in_("unrecognized arguments", res.get("stderr_tail") or "", "stderr_tail carries the argparse error")
+
+    listing, _ = _run_bg(["list", "--limit", "5"], env=env)
+    runs = listing.get("runs") or []
+    r.truthy(
+        all(run.get("status") != "running" for run in runs),
+        "a run that died on startup is never left as running",
+    )
+
 
 # ----------------------------------------------------------------------- main
 
@@ -390,6 +448,8 @@ def main() -> int:
     test_list_orders_runs(r)
     test_max_concurrent(r)
     test_status_not_found(r)
+    test_invalid_mode(r)
+    test_died_on_startup(r)
 
     duration = time.monotonic() - started
     print()

@@ -9,6 +9,18 @@ Subcommands (each prints a single JSON object on stdout)::
         Spawns a detached subprocess running invoke_codex_with_claude.py
         with the given args. Returns ``{run_id, started_at, pid}``.
 
+        ``mode`` is validated against the canonical wrapper modes before
+        anything is spawned: ``plan-review-iter`` (a codex_dialogue.py flow)
+        and ``batch-*`` (codex_batch.py) are rejected with
+        ``reason=invalid_mode`` instead of dying inside the wrapper's own
+        argparse, where nothing would observe the failure.
+
+        After spawning, the process is probed for
+        ``background.startup_probe_seconds``. A process already gone by then
+        without leaving parseable JSON returns
+        ``{status: error, reason: died_on_startup, exit_code, stderr_tail}``
+        rather than a ``run_id`` a caller would go on to poll forever.
+
     status <run_id>
         Reports current state. Returns
         ``{status, started_at, finished_at, mode, pid, pid_alive}`` where
@@ -63,10 +75,15 @@ from typing import Any
 BIN_DIR = Path(__file__).resolve().parent
 SKILL_DIR = BIN_DIR.parent
 WRAPPER = BIN_DIR / "invoke_codex_with_claude.py"
-CACHE_DIR = SKILL_DIR / "cache" / "bg_runs"
+# Mirrors the wrapper's own CACHE_DIR resolution so a test run can redirect
+# both the run directories and the telemetry away from the real cache.
+CACHE_ROOT = Path(os.environ.get("CODEX_WRAPPER_CACHE_DIR") or (SKILL_DIR / "cache"))
+CACHE_DIR = CACHE_ROOT / "bg_runs"
 
 sys.path.insert(0, str(BIN_DIR))
 from codex_config import (  # noqa: E402
+    EXIT_ERROR,
+    EXIT_OK,
     ensure_setup_complete,
     t,
 )
@@ -80,15 +97,24 @@ from codex_config import (
 DEFAULT_MAX_CONCURRENT = int(_config_get("background.default_max_concurrent", 5))
 DEFAULT_CLEANUP_MAX_AGE_DAYS = int(_config_get("background.default_cleanup_max_age_days", 7))
 LIST_DEFAULT_LIMIT = int(_config_get("background.list_default_limit", 50))
+STARTUP_PROBE_SECONDS = float(_config_get("background.startup_probe_seconds", 3.0))
+
+VALID_MODES = tuple(_config_get("wrapper.modes", ("plan-review", "verify", "delegate", "ask", "insight")))
 
 TERMINAL_STATUSES = ("done", "error", "cancelled")
+MAX_STARTUP_STDERR_CHARS = 4000
 
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+_last_emitted_status = ""
+
+
 def _emit(payload: dict[str, Any]) -> None:
+    global _last_emitted_status
+    _last_emitted_status = str(payload.get("status") or "")
     text = json.dumps(payload, ensure_ascii=False)
     try:
         sys.stdout.buffer.write(text.encode("utf-8"))
@@ -160,6 +186,45 @@ def _kill_process_tree(pid: int) -> None:
         pass
 
 
+def _output_has_json(output_path: Path) -> bool:
+    if not output_path.exists():
+        return False
+    try:
+        json.loads(output_path.read_text(encoding="utf-8", errors="replace"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return True
+
+
+def _read_stderr_tail(stderr_path: Path) -> str:
+    try:
+        text = stderr_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    return text[-MAX_STARTUP_STDERR_CHARS:].strip()
+
+
+def _probe_startup(proc: subprocess.Popen, run_dir: Path) -> dict[str, Any] | None:
+    """Report a startup failure, or ``None`` when the run looks healthy.
+
+    Exiting inside the probe window is not a failure on its own: the fake
+    Codex the test suite runs against answers in milliseconds. Only a process
+    that is already gone *and* left no parseable JSON behind counts as one.
+    """
+    try:
+        exit_code = proc.wait(timeout=STARTUP_PROBE_SECONDS)
+    except subprocess.TimeoutExpired:
+        return None
+    except OSError as exc:
+        return {"exit_code": -1, "stderr_tail": f"{exc.__class__.__name__}"}
+    if _output_has_json(run_dir / "output.json"):
+        return None
+    return {
+        "exit_code": exit_code,
+        "stderr_tail": _read_stderr_tail(run_dir / "stderr.log"),
+    }
+
+
 def _resolve_status(run_dir: Path, meta: dict[str, Any]) -> tuple[str, bool]:
     """Returns (status, pid_alive). Updates meta in place when terminal."""
     pid = int(meta.get("pid") or 0)
@@ -168,15 +233,7 @@ def _resolve_status(run_dir: Path, meta: dict[str, Any]) -> tuple[str, bool]:
         return "running", True
 
     cancelled = (run_dir / "cancelled.flag").exists()
-    output_path = run_dir / "output.json"
-    output_has_json = False
-    if output_path.exists():
-        try:
-            text = output_path.read_text(encoding="utf-8", errors="replace")
-            json.loads(text)
-            output_has_json = True
-        except (OSError, json.JSONDecodeError):
-            output_has_json = False
+    output_has_json = _output_has_json(run_dir / "output.json")
 
     if cancelled:
         status = "cancelled"
@@ -248,6 +305,19 @@ def _resolve_max_concurrent(cli_value: int | None) -> int:
 
 def cmd_start(args: argparse.Namespace) -> int:
     _cleanup_old_runs()
+
+    if args.mode not in VALID_MODES:
+        _emit(
+            {
+                "status": "error",
+                "reason": "invalid_mode",
+                "mode": args.mode,
+                "valid_modes": list(VALID_MODES),
+                "hint": t("bg.hint.invalid_mode"),
+            }
+        )
+        return 0
+
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
     max_conc = _resolve_max_concurrent(args.max_concurrent)
@@ -335,6 +405,25 @@ def cmd_start(args: argparse.Namespace) -> int:
         "finished_at": None,
         "status": "running",
     }
+
+    startup_failure = _probe_startup(proc, run_dir)
+    if startup_failure is not None:
+        meta["status"] = "error"
+        meta["finished_at"] = _now_iso()
+        _write_meta(run_dir, meta)
+        _emit(
+            {
+                "status": "error",
+                "reason": "died_on_startup",
+                "run_id": run_id,
+                "mode": args.mode,
+                "exit_code": startup_failure["exit_code"],
+                "stderr_tail": startup_failure["stderr_tail"],
+                "hint": t("bg.hint.died_on_startup"),
+            }
+        )
+        return 0
+
     _write_meta(run_dir, meta)
 
     _emit(
@@ -536,7 +625,7 @@ def main(argv: list[str] | None = None) -> int:
         "list": cmd_list,
     }[args.subcommand]
     try:
-        return handler(args)
+        rc = handler(args)
     except Exception as exc:  # never raise; same contract as the wrapper
         _emit(
             {
@@ -545,7 +634,14 @@ def main(argv: list[str] | None = None) -> int:
                 "subcommand": args.subcommand,
             }
         )
-        return 0
+        return EXIT_ERROR
+    # Handlers report through the emitted JSON; the exit code mirrors it so a
+    # caller that only checks the exit status cannot read a refusal as a live
+    # run. Only "error" is a failure here: status/list legitimately emit run
+    # states like "running" or "cancelled".
+    if rc:
+        return rc
+    return EXIT_ERROR if _last_emitted_status == "error" else EXIT_OK
 
 
 if __name__ == "__main__":

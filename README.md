@@ -2,7 +2,7 @@
 
 A skill for [Claude Code](https://claude.com/claude-code) that bridges
 Claude and the [Codex CLI](https://github.com/openai/codex), offering
-seven operation modes for plan review, code verification, questions, and
+eight operation modes for plan review, code verification, questions, and
 task delegation — with controlled sandbox, telemetry, and batching.
 
 ## What it is
@@ -16,23 +16,40 @@ telemetry).
 
 ## Modes
 
-| Mode             | Reasoning | Sandbox                | Ceiling | Typical use                                                   |
-|------------------|-----------|------------------------|---------|---------------------------------------------------------------|
-| `plan-review`    | max       | read-only              | 900s    | Review a plan before implementation                           |
-| `verify`         | high      | read-only              | 600s    | Review an implementation through `git diff`                   |
-| `ask`            | medium    | read-only              | 300s    | Direct question / second opinion                              |
-| `insight`        | max       | read-only              | 1200s   | Holistic session retrospective                                |
-| `delegate`       | max       | **danger-full-access** | 900s    | Codex executes a task (explicit confirmation required)        |
-| `batch-ask`      | medium    | read-only              | —       | Up to 4 questions in parallel                                 |
-| `batch-delegate` | max       | danger-full-access     | —       | Multiple parallel executions with declared write-set          |
+| Mode                 | Reasoning | Sandbox                | Floor → ceiling | Typical use                                            |
+|----------------------|-----------|------------------------|-----------------|--------------------------------------------------------|
+| `plan-review`        | max       | read-only              | 900s → 3600s    | Review a plan before implementation                    |
+| `verify`             | high      | read-only              | 600s → 2400s    | Review an implementation through `git diff`            |
+| `ask`                | medium    | read-only              | 300s → 1200s    | Direct question / second opinion                       |
+| `insight`            | max       | read-only              | 1200s → 4800s   | Holistic session retrospective                         |
+| `delegate`           | max       | **danger-full-access** | 900s → 3600s    | Codex executes a task (explicit confirmation required) |
+| `batch-ask`          | medium    | read-only              | —               | Up to 4 questions in parallel                          |
+| `batch-delegate`     | max       | danger-full-access     | —               | Multiple parallel executions with declared write-set   |
+| `batch-plan-review`  | max       | read-only              | —               | Plan slices reviewed in parallel, findings deduplicated |
 
 Every mode runs on the strongest model the Codex CLI advertises, on the fast
-service tier. The ceiling is a backstop: runs are supervised through the Codex
-event stream and a Codex that stops emitting events for 180s is killed well
-before it, so raising the ceiling does not mean waiting on a hung process.
+service tier. The wall-clock budget is not a constant: the floor is what a small
+target gets, and the wrapper raises its own ceiling with the size of the prompt
+it assembled, up to 4x. A large plan reviewed under a small plan's ceiling dies
+mid-review and reports zero findings, which is indistinguishable from a clean
+result. Runs are also supervised through the Codex event stream, so a Codex that
+stops emitting events for 180s is killed well before either bound.
+
 `plan-review` and `verify` sweep a fixed checklist of categories and report
 `coverage` alongside the findings, so an empty category is visibly empty rather
 than silently unexamined.
+
+### Failure is never silent
+
+Every entry point mirrors its `status` in the process exit code — `0` for `ok`,
+`2` for `error`, `3` for `needs_input` — while still writing the full JSON to
+stdout. A caller that checks only the exit code cannot mistake a timeout for a
+spotless review. The same rule holds one level up: `codex_bg.py start` refuses
+an unknown mode before spawning anything, probes the spawned process for 3s and
+reports `died_on_startup` with the captured stderr instead of handing out a
+`run_id` for a process that is already gone; and a `codex_dialogue.py` turn
+whose wrapper failed comes back with envelope `status: error`, so two timed-out
+turns are never read as convergence.
 
 ## Installation
 
@@ -82,6 +99,10 @@ such as:
 │   ├── invoke_codex_with_claude.py  # canonical wrapper
 │   ├── invoke_codex_with_claude.ps1 # PowerShell shim
 │   ├── codex_batch.py               # parallel batching (batch-* modes)
+│   ├── codex_bg.py                  # detached background runs
+│   ├── codex_dialogue.py            # iterative multi-turn plan review
+│   ├── analyze_plan_complexity.py   # complexity score + raw metrics + routing flags
+│   ├── split_plan_by_phase.py       # per-phase slices + coherence slice
 │   ├── build_review_packet.py       # builds packet for plan-review
 │   ├── collect_claude_context.py    # collects global/repo/target CLAUDE.md
 │   ├── dump_transcript_for_codex.py # filtered transcript dump
@@ -89,9 +110,28 @@ such as:
 │   └── codex_output_schema.json     # JSON Schema (--output-schema)
 └── tests/
     ├── test_codex_skill.py          # mocked tests (fast)
+    ├── test_codex_bg.py             # background runner tests
     ├── test_codex_live.py           # tests against the real Codex (cost tokens)
     └── fake_codex.py                # parametrisable fake Codex
 ```
+
+## Large plans
+
+A plan big enough to hold several phases does not fit one review. Before every
+`plan-review`, `analyze_plan_complexity.py` scores the plan and returns
+`suggest_iterative` / `suggest_split` plus the raw `metrics` behind them. From
+four phases and 16 KB up, the skill splits the plan with
+`split_plan_by_phase.py` into one slice per phase plus a **coherence slice**,
+and reviews all of them in parallel through `batch-plan-review`.
+
+Each phase slice repeats the plan's shared context and the outline of the other
+phases, so no reviewer reads blind. The coherence slice carries the whole plan
+with an instruction to look only at structure — ordering, cross-phase
+dependencies, contradictions, boundary gaps — which is precisely what slicing
+would otherwise throw away. Findings come back deduplicated by title and
+location, each naming the slices that raised it. A plan with no phase headings
+returns `not_splittable` and falls back to the monolithic review, rather than
+reviewing one slice and calling it coverage.
 
 ## Security
 

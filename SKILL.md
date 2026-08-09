@@ -1,7 +1,7 @@
 ---
 name: codex
 description: Delegate one of five operations to Codex — review a plan (plan-review), verify an implementation via git diff (verify), answer a question/opinion (ask), produce a holistic session retrospective (insight), or execute a task (delegate). Use this skill ALWAYS when the user says any of these phrases (English — "review this plan with codex", "have codex review", "ask codex what it thinks", "second opinion from codex", "verify my implementation with codex", "have codex look at what I did", "delegate to codex", "send it to codex", "do a session insight", "retrospective with codex"; or pt-BR equivalents like "revise esse plano com o codex", "pergunte ao codex o que ele acha", "verifica minha implementação com o codex", "manda o codex fazer", "delega ao codex", "faz um insight da sessão"). This skill is the ONLY entry point to invoke Codex automatically — do not use the /codex:* plugin. For `delegate` mode, ALWAYS confirm with the user before running because Codex runs with `--sandbox danger-full-access` and can edit/delete files inside or outside the workspace.
-argument-hint: plan-review|plan-review-iter|verify|ask|insight|delegate|batch-ask|batch-delegate|bg-start|bg-status|bg-output|bg-cancel|bg-list [args]
+argument-hint: "wrapper modes: plan-review|verify|ask|insight|delegate — composed flows: plan-review-iter|plan-review-split|batch-ask|batch-delegate|batch-plan-review — background controls: bg-start|bg-status|bg-output|bg-cancel|bg-list [args]"
 model: haiku
 context: fork
 allowed-tools:
@@ -18,6 +18,7 @@ allowed-tools:
   - Bash(*scripts/codex_bg.py*)
   - Bash(*scripts/analyze_plan_complexity.py*)
   - Bash(*scripts/codex_dialogue.py*)
+  - Bash(*scripts/split_plan_by_phase.py*)
   - Bash(*scripts/set_locale.py*)
 ---
 
@@ -29,16 +30,34 @@ the modes below. Never call the `codex` CLI directly, never use the
 official `/codex:*` plugin from this skill — that one is an explicit
 manual user bypass, not an automation path.
 
+**Three separate axes, and they do not mix.** Confusing them is how a
+review silently produces nothing:
+
+| Axis | Values | Entry point |
+|---|---|---|
+| Wrapper modes | `plan-review`, `verify`, `ask`, `insight`, `delegate` | `invoke_codex_with_claude.py <mode>` |
+| Composed flows | `plan-review-iter`, `plan-review-split`, `batch-*` | `codex_dialogue.py`, `split_plan_by_phase.py` + `codex_batch.py` |
+| Background controls | `bg-start`, `bg-status`, `bg-output`, `bg-cancel`, `bg-list` | `codex_bg.py` |
+
+`bg-start` takes a **wrapper mode only**. A composed flow is not a mode:
+`bg-start plan-review-iter` is rejected with `reason=invalid_mode`.
+
 **Reasoning per mode** (controlled by the wrapper, do not override
 manually):
 
-| Mode | Reasoning | Sandbox | Wall-clock ceiling |
-|---|---|---|---|
-| `plan-review` | `max` | `read-only` | 900s |
-| `verify` | `high` | `read-only` | 600s |
-| `ask` | `medium` | `read-only` | 300s |
-| `insight` | `max` | `read-only` | 1200s |
-| `delegate` | `max` | `danger-full-access` | 900s |
+| Mode | Reasoning | Sandbox | Wall-clock floor | Ceiling |
+|---|---|---|---|---|
+| `plan-review` | `max` | `read-only` | 900s | 3600s |
+| `verify` | `high` | `read-only` | 600s | 2400s |
+| `ask` | `medium` | `read-only` | 300s | 1200s |
+| `insight` | `max` | `read-only` | 1200s | 4800s |
+| `delegate` | `max` | `danger-full-access` | 900s | 3600s |
+
+The floor is what a small target gets. The wrapper raises its own ceiling
+with the size of the prompt it assembled — every 20 KB past the first 20 KB
+adds one floor's worth of time, up to 4x. A 40 KB plan is not reviewable in
+the time a 4 KB plan needs, and a fixed ceiling is what produced timeouts
+reported as clean reviews.
 
 The model is chosen by the wrapper, not inherited from `~/.codex/config.toml`:
 `wrapper.model` defaults to `auto`, which resolves to the strongest model the
@@ -55,7 +74,9 @@ flight the wrapper writes progress to stderr:
 ```
 
 `idle` resets on every event, so `idle` climbing while `events` stays flat is the
-signal that Codex is stuck rather than thinking.
+signal that Codex is stuck rather than thinking. The converse also matters: a run
+that hits the wall-clock ceiling with `events` still climbing was working the whole
+time and needed more room, not a kill.
 
 **Natural-phrase → mode mapping** (Claude matches either language
 naturally; English is listed first as the documentation default,
@@ -65,6 +86,7 @@ Portuguese phrases follow as user-spoken equivalents):
 |---|---|
 | "review this plan with codex" / "have codex review" / "ask codex to review" / "revise esse plano com o codex" / "revisa pelo codex" / "pede pro codex revisar" | `plan-review` |
 | "iteratively review with codex" / "open a discussion with codex" / "go back and forth with codex until convergence" / "multi-turn round with codex" / "revisa iterativamente com o codex" / "abre uma discussão com o codex sobre esse plano" / "vai e volta com o codex até convergir" / "rodada multi-jogada com o codex" | `plan-review-iter` |
+| "review each phase in parallel" / "split this plan and review the slices" / "revisa fase por fase" / "fatia esse plano e revisa em paralelo" | `plan-review-split` |
 | "ask codex what it thinks" / "ask codex" / "second opinion from codex" / "pergunte ao codex o que ele acha" / "pergunta pro codex" / "segunda opinião do codex" | `ask` |
 | "verify my implementation with codex" / "have codex look at what I did" / "verifica minha implementação com o codex" / "pede pro codex olhar o que eu fiz" | `verify` |
 | "implement this plan with codex" / "send it to codex" / "delegate to codex" / "implemente esse plano com o codex" / "manda o codex fazer" / "delega ao codex" | `delegate` |
@@ -111,14 +133,25 @@ Per-mode policy:
 3. Otherwise, ask.
 
 **Required step before invoking the wrapper:** run
-`scripts/analyze_plan_complexity.py --plan-file <path>`. If the output
-has `suggest_iterative=true`, **show a single suggestion line** to the
-user (format: `"This plan [N] files across [paths], [M] phases — want
-to run plan-review-iter (up to 3 turns) instead of the one-shot
-review?"`) and ask before proceeding. If the user accepts, switch to
-`plan-review-iter`. If they decline (or stay silent), invoke
-`plan-review` normally. **Do not suggest twice for the same
-plan/turn.**
+`scripts/analyze_plan_complexity.py --plan-file <path>`. It returns
+`score`, `suggest_iterative`, `suggest_split`, translated `reasons`, and a
+`metrics` block with the raw counts (`size_bytes`, `distinct_files`,
+`phases`, `sensitive_hits`, `cross_module_hits`).
+
+Route on that output, in this order:
+
+| Condition | Route |
+|---|---|
+| `suggest_split=true` | **`plan-review-split`**, automatically. No question asked — a plan this size does not fit one review. |
+| `suggest_iterative=true` (and not split) | show the one-line suggestion and ask before switching to `plan-review-iter` |
+| neither | `plan-review` one-shot |
+
+`suggest_split` is true when the plan has at least
+`complexity.split_phases_threshold` phases (4) **and** exceeds
+`complexity.split_size_threshold_bytes` (16 KB). Suggestion line format for
+the iterative route: `"This plan [N] files across [paths], [M] phases — want
+to run plan-review-iter (up to 3 turns) instead of the one-shot review?"`.
+**Do not suggest twice for the same plan/turn.**
 
 **Packet:** the wrapper assembles the review packet automatically when
 it receives `--last-message-file` (resolves cited files, applies the
@@ -176,7 +209,7 @@ Always ask before passing the flag.
   --plan-file "<path>" \
   --cwd "<cwd>" \
   [--max-turns N]
-# {"status": "ok", "dialogue_id": "abc...", "turn": 1, "findings_payload": {...}}
+# {"status": "ok", "wrapper_status": "ok", "dialogue_id": "abc...", "turn": 1, "findings_payload": {...}}
 
 # Subsequent turns (Claude writes the revised plan to a new file)
 "$SKILLS_PYTHON" "$USERPROFILE/.claude/skills/codex/scripts/codex_dialogue.py" next-turn \
@@ -192,11 +225,61 @@ Always ask before passing the flag.
   --dialogue-id "abc..."
 ```
 
+**Reading the envelope:** `status` is `error` whenever that turn's wrapper
+failed, and `wrapper_status` always carries the wrapper's own verdict. A
+failed turn returns `findings: []`, which looks exactly like a spotless
+plan — never present a turn as clean without checking `wrapper_status`
+first. A dialogue never converges on failed turns.
+
 **Final presentation** (after `finish`): show the consolidated
 `dialogue_log.md` — contains the turn 1 → turn N delta
 (added/removed/modified sections), a `turn | severity | findings |
 block | summary` table, the last turn's pending findings, and the
 final plan. **Do not** verbatim-dump every turn.
+
+## Mode 1c — `plan-review-split` *(parallel per-phase review)*
+
+**When:** `analyze_plan_complexity` returned `suggest_split=true`, or the
+user asked for it explicitly. Automatic — this route does not ask.
+
+**Why it exists:** one `plan-review` over a 40 KB plan is a single run with
+a single ceiling and a single context. Splitting it turns that into N+1
+independent reviews that run concurrently, each citing fewer files so each
+review packet stays far from the 120 KB truncation limit.
+
+**What the split costs, and what buys it back:** slicing by phase loses the
+analysis *between* phases. The extra `coherence` slice carries the whole
+plan with an instruction to look only at structure — ordering, cross-phase
+dependencies, contradictions, boundary gaps. A defect visible only when
+reading phase 2's detail alongside phase 5's detail can still escape; say so
+if the user asks how exhaustive the split review was.
+
+**Execution:**
+
+```bash
+# 1. Slice. Returns {status, output_dir, phases, slices:[{id, kind, heading, path, bytes}]}
+"$SKILLS_PYTHON" "$USERPROFILE/.claude/skills/codex/scripts/split_plan_by_phase.py" \
+  --plan-file "<plan path>"
+
+# 2. Build the batch input in $env:TEMP from the slices:
+#    {"max_parallel": 6, "tasks": [{"id": "phase-1", "plan_file": "...", "cwd": "<cwd>"}, ...]}
+
+# 3. Review every slice in parallel, each as a real plan-review
+"$SKILLS_PYTHON" "$USERPROFILE/.claude/skills/codex/scripts/codex_batch.py" \
+  batch-plan-review --input-file "<batch.json>"
+```
+
+**`status: not_splittable`** means the plan has no `Phase N` / `Fase N`
+headings. Fall back to the monolithic `plan-review` and tell the user the
+plan could not be sliced. Never review a single slice and report it as
+coverage of the whole plan.
+
+**Presentation:** use the `aggregate` block, not the per-item results. Its
+findings are already deduplicated across slices; each carries a `slices`
+array naming the phases that raised it, and `duplicates_merged` says how
+many repeats collapsed. Mention any slice whose item came back
+`status: error` — that phase was not reviewed, and the aggregate cannot
+show what it never saw.
 
 ## Mode 2 — `verify` *(review an implementation)*
 
@@ -344,15 +427,31 @@ write-set is compared against the reported
 `files_created/edited/deleted`; the run is marked
 `write_set_violated=true` when Codex goes outside it.
 
+## Mode 8 — `batch-plan-review` *(parallel plan slices)*
+
+The execution half of `plan-review-split`. Each item takes `plan_file` and
+runs the wrapper in the real `plan-review` mode — reasoning `max`, full
+review checklist. Routing slices through `batch-ask` instead would be
+faster and much weaker, and is wrong. On top of `items` the result carries
+an `aggregate` block: findings deduplicated by `(title, location)` keeping
+the highest severity, `coverage` unioned across slices, `block_recommended`
+as `any()`. One slice failing never cancels the others.
+
 ## Background modes — `bg-start | bg-status | bg-output | bg-cancel | bg-list`
 
 When a wrapper call is expected to take a while (e.g. `delegate` >60s,
 `insight` >5min) and blocking the session is undesirable, use
 `scripts/codex_bg.py`:
 
+**`bg-start` takes a wrapper mode and nothing else** — `plan-review`,
+`verify`, `ask`, `insight`, `delegate`. `plan-review-iter` belongs to
+`codex_dialogue.py`, `batch-*` to `codex_batch.py`; neither is a mode and
+neither can be passed here. Anything else is refused up front with
+`status=error, reason=invalid_mode` and the list of valid modes.
+
 | Subcommand | Purpose |
 |---|---|
-| `bg-start <mode> [...args]` | Detached wrapper spawn. Returns immediately with `run_id` and `pid`. |
+| `bg-start <mode> [...args]` | Detached wrapper spawn. Validates the mode, spawns, then probes the process for 3s. Returns `run_id` and `pid`. |
 | `bg-status <run_id>` | Current state: `running \| done \| error \| cancelled`. |
 | `bg-output <run_id>` | Wrapper canonical JSON (same schema as the synchronous modes) when `done`. |
 | `bg-cancel <run_id>` | Kills the subprocess and marks the run as `cancelled`. |
@@ -362,6 +461,12 @@ When a wrapper call is expected to take a while (e.g. `delegate` >60s,
 - `bg-start` returns control immediately. **ALWAYS** show the `run_id`
   to the user at start time so they can resume with
   `bg-status <run_id>` even in future sessions.
+- **`bg-start` can fail.** Two failure shapes come back with `status=error`
+  and no `run_id`: `reason=invalid_mode` (a composed flow was passed as a
+  mode) and `reason=died_on_startup` (the wrapper process was already gone
+  after the 3s probe without writing JSON, with `exit_code` and
+  `stderr_tail` attached). Both mean **nothing is running**. Report the
+  failure and stop — do not announce a background run, and do not poll.
 - Default limit of **5 concurrent runs**. Configurable via
   `--max-concurrent N` or `CODEX_BG_MAX_CONCURRENT`. When the limit is
   hit, `bg-start` refuses with
@@ -440,6 +545,21 @@ questions          [ {id, question, context} ] (status=needs_input)
 files_*            (delegate)
 ```
 
+**Exit code.** Every entry point mirrors its status in the process exit code,
+so a caller that only looks at the exit status cannot read a timeout as a
+clean review:
+
+| Exit code | Meaning |
+|---|---|
+| `0` | `status: ok` |
+| `2` | `status: error` (timeout, unparseable reply, invalid mode, dead startup, internal failure) — and `partial` for the batcher, where some item was not done |
+| `3` | `status: needs_input` (wrapper only) |
+
+The JSON is always on stdout first, whatever the exit code. A non-zero exit
+with `findings: []` is a failure, never a spotless target. `bg-status` and
+`bg-list` are the one nuance: they exit `0` while reporting run states like
+`running` or `cancelled`, and only exit `2` when the run itself is in error.
+
 ### Presentation to the user
 
 ALWAYS render in markdown (headers, tables, blockquote, bold). NEVER
@@ -507,9 +627,14 @@ summary as a blockquote, ask whether to retry.
 - **Never** invoke `/codex:*` (the official plugin) from this skill.
 - **Never** apply findings as automatic edits — only present them.
 - **Before any `plan-review`**, run
-  `scripts/analyze_plan_complexity.py`. If the output suggests
-  iterative, show the one-line suggestion and ask. Do not skip this
-  step. Do not suggest twice for the same plan/turn.
+  `scripts/analyze_plan_complexity.py` and route on its output:
+  `suggest_split` goes straight to `plan-review-split`, `suggest_iterative`
+  gets the one-line suggestion and a question. Do not skip this step. Do not
+  suggest twice for the same plan/turn.
+- **Never report a review that did not happen.** `status: error`, a non-zero
+  exit code, `wrapper_status: error` in a dialogue envelope, or a batch item
+  that failed all mean the same thing: that target was not reviewed. Say so.
+  An empty `findings` list from a failed run is not a clean result.
 - **Temporary files** (payload.json, task.txt, packet, transcripts)
   **only** in `$env:TEMP`; zero writes inside the target repo.
 - For `delegate`, explicit user confirmation with the 5 fields is

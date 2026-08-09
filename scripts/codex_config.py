@@ -31,6 +31,22 @@ LOCAL_PATH = SKILL_DIR / "config.local.json"
 
 DEFAULT_LOCALE = "pt-BR"
 
+# Shared exit-code contract. Every entry point writes its canonical JSON to
+# stdout and then mirrors the status here, so a caller that only inspects the
+# exit code cannot read a failure as a clean result.
+EXIT_OK = 0
+EXIT_ERROR = 2
+EXIT_NEEDS_INPUT = 3
+
+
+def exit_code_for_status(status: str | None) -> int:
+    if status == "ok":
+        return EXIT_OK
+    if status == "needs_input":
+        return EXIT_NEEDS_INPUT
+    return EXIT_ERROR
+
+
 _cached_config: dict[str, Any] | None = None
 _cached_locale: str | None = None
 
@@ -201,6 +217,12 @@ def subprocess_timeout_for(mode: str) -> float:
     retry multiplier — plus a margin for context collection and teardown.
     A hardcoded value here would silently become the real ceiling and kill
     the wrapper mid-run whenever the per-mode timeout is raised.
+
+    The wrapper scales its own ceiling with the size of the prompt it has to
+    read, so the budget here is built on the *highest* value it can reach for
+    the mode, not on the per-mode floor. Budgeting on the floor would move the
+    failure from the wrapper to its supervisor instead of removing it. The
+    env override skips the scaling on both sides, so it is taken verbatim.
     """
     base: float | None = None
     env_override = os.environ.get("CODEX_WRAPPER_TIMEOUT_SECONDS")
@@ -217,6 +239,11 @@ def subprocess_timeout_for(mode: str) -> float:
             base = float(raw)
         except (TypeError, ValueError):
             base = 300.0
+        try:
+            ceiling_multiplier = max(1.0, float(get("wrapper.scale_ceiling_multiplier", 4.0)))
+        except (TypeError, ValueError):
+            ceiling_multiplier = 4.0
+        base *= ceiling_multiplier
     try:
         multiplier = max(1.0, float(get("wrapper.total_deadline_multiplier", 1.5)))
     except (TypeError, ValueError):

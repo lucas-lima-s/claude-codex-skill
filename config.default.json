@@ -12,9 +12,11 @@
     "background": {
       "default_max_concurrent": 5,
       "default_cleanup_max_age_days": 7,
-      "list_default_limit": 50
+      "list_default_limit": 50,
+      "startup_probe_seconds": 3.0
     },
     "wrapper": {
+      "modes": ["plan-review", "verify", "delegate", "ask", "insight"],
       "default_timeout_seconds": 300,
       "mode_timeouts": {
         "ask": 300,
@@ -23,6 +25,9 @@
         "delegate": 900,
         "insight": 1200
       },
+      "scale_free_bytes": 20480,
+      "scale_bytes_per_unit": 20480,
+      "scale_ceiling_multiplier": 4.0,
       "idle_timeout_seconds": 180,
       "mode_idle_timeouts": {
         "ask": 180,
@@ -50,9 +55,15 @@
       "telemetry_max_bytes": 5242880,
       "telemetry_schema_version": 1
     },
+    "split": {
+      "min_phases": 2,
+      "max_head_bytes": 6144
+    },
     "complexity": {
       "threshold_score": 3,
       "size_threshold_bytes": 4096,
+      "split_phases_threshold": 4,
+      "split_size_threshold_bytes": 16384,
       "distinct_files_threshold": 5,
       "phases_threshold": 2,
       "sensitive_keywords": [
@@ -130,6 +141,20 @@
       "bg.cli.help.output": "devolve o JSON canônico de uma run finalizada.",
       "bg.cli.help.cancel": "mata o subprocesso de uma run em execução.",
       "bg.cli.help.list": "lista runs ativas e recentes (ordenado por started_at desc).",
+      "bg.hint.invalid_mode": "bg-start só aceita modos do wrapper. plan-review-iter é um fluxo do codex_dialogue.py e batch-* é do codex_batch.py; nenhum dos dois pode ser passado aqui.",
+      "bg.hint.died_on_startup": "O processo do wrapper morreu logo após o arranque e não produziu JSON. Veja stderr_tail: nenhuma run foi iniciada.",
+
+      "split.cli.description": "Fatia um plano por fase, gerando uma fatia por fase mais uma fatia de coerência estrutural.",
+      "split.cli.help.plan_file": "Caminho do arquivo markdown do plano.",
+      "split.cli.help.output_dir": "Diretório de saída das fatias (default: pasta temporária derivada do caminho do plano).",
+      "split.preface.phase": "Você está revisando a FASE {n} de {total} de um plano maior. Revise esta fase com profundidade total. As demais fases aparecem apenas como índice, para você enxergar fronteiras e dependências — não as revise.",
+      "split.preface.coherence": "Você está revisando a ESTRUTURA de um plano de {total} fases, não a implementação. Procure exclusivamente: ordem errada entre fases, dependência de uma fase em algo que só existe depois, contradição entre fases, lacuna na fronteira entre fases e critério de conclusão ausente. Não aponte detalhe interno de fase — outro revisor cobre isso.",
+      "split.section.head": "## Contexto do plano (comum a todas as fases)",
+      "split.section.outline": "## Índice das fases",
+      "split.section.slice": "## Fase sob revisão",
+      "split.section.full_plan": "## Plano completo",
+      "split.outline.current": "   <-- esta fatia",
+      "split.hint.not_splittable": "O plano não tem títulos de fase (Phase N / Fase N). Use o plan-review monolítico: não há como fatiar sem inventar fronteiras.",
 
       "complexity.cli.description": "Pontua a complexidade de um plano para decidir se vale sugerir o modo iterativo (plan-review-iter) em vez do plan-review one-shot.",
       "complexity.cli.help.plan_file": "Caminho do arquivo markdown do plano.",
@@ -220,6 +245,20 @@
       "bg.cli.help.output": "return the canonical JSON of a finished run.",
       "bg.cli.help.cancel": "kill the subprocess of a running run.",
       "bg.cli.help.list": "list active and recent runs (ordered by started_at desc).",
+      "bg.hint.invalid_mode": "bg-start only accepts wrapper modes. plan-review-iter is a codex_dialogue.py flow and batch-* belongs to codex_batch.py; neither can be passed here.",
+      "bg.hint.died_on_startup": "The wrapper process died right after spawning and produced no JSON. See stderr_tail: no run was started.",
+
+      "split.cli.description": "Split a phased plan into one slice per phase plus a structural coherence slice.",
+      "split.cli.help.plan_file": "Path to the plan markdown file.",
+      "split.cli.help.output_dir": "Where to write the slices (default: a temp folder derived from the plan path).",
+      "split.preface.phase": "You are reviewing PHASE {n} of {total} of a larger plan. Review this phase in full depth. The other phases appear only as an outline, so you can see boundaries and dependencies — do not review them.",
+      "split.preface.coherence": "You are reviewing the STRUCTURE of a {total}-phase plan, not its implementation. Look exclusively for: phases in the wrong order, a phase depending on something that only exists later, contradictions between phases, gaps at the boundaries between phases, and missing completion criteria. Do not raise detail internal to a phase — another reviewer covers that.",
+      "split.section.head": "## Plan context (shared by every phase)",
+      "split.section.outline": "## Phase outline",
+      "split.section.slice": "## Phase under review",
+      "split.section.full_plan": "## Full plan",
+      "split.outline.current": "   <-- this slice",
+      "split.hint.not_splittable": "The plan has no phase headings (Phase N / Fase N). Use the monolithic plan-review: there is no way to split it without inventing boundaries.",
 
       "complexity.cli.description": "Score plan complexity to decide whether to suggest the iterative mode (plan-review-iter) over the one-shot plan-review.",
       "complexity.cli.help.plan_file": "Path to the plan markdown file.",

@@ -11,6 +11,15 @@ The wrapper never raises: timeouts, missing binary, non-zero exit, malformed
 output and internal exceptions all surface as a structured ``status=error``
 result on stdout.
 
+Failure also reaches the caller through the process exit code, so a caller
+that only checks the exit status cannot mistake a timeout for a clean review::
+
+    0   status == "ok"
+    2   status == "error"
+    3   status == "needs_input"
+
+The JSON is always emitted on stdout first, whatever the exit code.
+
 Canonical output (JSON, single line on stdout, UTF-8)::
 
     {
@@ -35,7 +44,10 @@ Canonical output (JSON, single line on stdout, UTF-8)::
     }
 
 Environment overrides:
-  * ``CODEX_WRAPPER_TIMEOUT_SECONDS``   — global wall-clock override (per-mode default otherwise).
+  * ``CODEX_WRAPPER_TIMEOUT_SECONDS``   — global wall-clock override. Takes absolute
+    precedence and disables the size scaling below. Without it, the per-mode ceiling is
+    the floor and grows with the assembled prompt, up to
+    ``wrapper.scale_ceiling_multiplier`` times that floor.
   * ``CODEX_WRAPPER_IDLE_TIMEOUT_SECONDS`` — kill Codex after this many seconds
     without a single stream event; ``0`` disables the idle guard.
   * ``CODEX_WRAPPER_MODEL``             — model slug; overrides config (``auto`` resolves
@@ -84,6 +96,7 @@ COLLECT_SCRIPT = BIN_DIR / "collect_claude_context.py"
 sys.path.insert(0, str(BIN_DIR))
 from codex_config import (  # noqa: E402
     ensure_setup_complete,
+    exit_code_for_status,
     t,
 )
 from codex_config import (
@@ -132,6 +145,10 @@ MODE_TIMEOUTS: dict[str, float] = _float_map(
     },
 )
 
+TIMEOUT_SCALE_FREE_BYTES = int(_config_get("wrapper.scale_free_bytes", 20480))
+TIMEOUT_SCALE_BYTES_PER_UNIT = int(_config_get("wrapper.scale_bytes_per_unit", 20480))
+TIMEOUT_SCALE_CEILING_MULTIPLIER = float(_config_get("wrapper.scale_ceiling_multiplier", 4.0))
+
 IDLE_TIMEOUT_SECONDS = float(_config_get("wrapper.idle_timeout_seconds", 180.0))
 
 MODE_IDLE_TIMEOUTS: dict[str, float] = _float_map(
@@ -177,8 +194,9 @@ MODELS_CACHE_PATH = str(_config_get("wrapper.models_cache_path", "~/.codex/model
 SERVICE_TIER = str(_config_get("wrapper.service_tier", "priority"))
 
 REVIEW_MODES = ("plan-review", "verify", "ask", "insight")
-ALL_MODES = ("plan-review", "verify", "delegate", "ask", "insight")
+ALL_MODES = tuple(_config_get("wrapper.modes", ("plan-review", "verify", "delegate", "ask", "insight")))
 COVERAGE_MODES = ("plan-review", "verify")
+
 
 HEARTBEAT_INTERVAL = float(_config_get("wrapper.heartbeat_interval_seconds", 15.0))
 HEARTBEAT_JITTER = float(_config_get("wrapper.heartbeat_jitter_seconds", 2.0))
@@ -1407,15 +1425,40 @@ def _invoke_codex(
 # --------------------------------------------------------------- TIMEOUT
 
 
-def _resolve_timeout(mode: str) -> float:
+def _base_timeout(mode: str) -> float:
+    return MODE_TIMEOUTS.get(mode, DEFAULT_TIMEOUT_SECONDS)
+
+
+def max_timeout_for(mode: str) -> float:
+    """The highest ceiling ``_resolve_timeout`` can ever hand out for a mode.
+
+    External supervisors budget against this, not against the base: a caller
+    that killed the wrapper at the base ceiling would move the failure rather
+    than fix it.
+    """
+    return _base_timeout(mode) * TIMEOUT_SCALE_CEILING_MULTIPLIER
+
+
+def _resolve_timeout(mode: str, prompt_bytes: int = 0) -> float:
+    """Wall-clock ceiling for one Codex run, scaled by how much it has to read.
+
+    A constant per-mode ceiling treats a 5 KB plan and a 40 KB one alike, so
+    the large one dies mid-review and reports zero findings. The base stays
+    the floor; anything past ``scale_free_bytes`` buys proportionally more
+    time, up to ``scale_ceiling_multiplier`` times the base.
+    """
     raw = os.environ.get("CODEX_WRAPPER_TIMEOUT_SECONDS")
     if raw:
         try:
-            value = float(raw)
-            return max(1.0, value)
+            return max(1.0, float(raw))
         except ValueError:
             pass
-    return MODE_TIMEOUTS.get(mode, DEFAULT_TIMEOUT_SECONDS)
+    base = _base_timeout(mode)
+    if prompt_bytes <= 0 or TIMEOUT_SCALE_BYTES_PER_UNIT <= 0:
+        return base
+    excess = max(0, prompt_bytes - TIMEOUT_SCALE_FREE_BYTES)
+    scaled = base * (1.0 + excess / TIMEOUT_SCALE_BYTES_PER_UNIT)
+    return min(scaled, max_timeout_for(mode))
 
 
 # --------------------------------------------------------------- TELEMETRY
@@ -1577,7 +1620,7 @@ def main(argv: list[str] | None = None) -> int:
         transcript_text = _read_text_safely(Path(args.transcript_file) if args.transcript_file else None)
         transcript_jsonl_path = args.transcript_jsonl_path or ""
         prompt = _build_prompt(args.mode, context_text, user_payload, transcript_text, transcript_jsonl_path)
-        timeout = _resolve_timeout(args.mode)
+        timeout = _resolve_timeout(args.mode, len(prompt.encode("utf-8")))
         effort_override = _resolve_effort_override(getattr(args, "reasoning_effort", None))
         heartbeat.set_phase("invoking-codex")
         result, retry_count, exit_code, outcome = _invoke_codex(
@@ -1624,7 +1667,7 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     _emit_json(result)
-    return 0
+    return exit_code_for_status(result.get("status"))
 
 
 if __name__ == "__main__":

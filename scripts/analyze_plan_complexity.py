@@ -9,13 +9,24 @@ Output JSON (stdout, single line, UTF-8)::
     {
         "score": 7,
         "suggest_iterative": true,
+        "suggest_split": false,
         "reasons": [
             "8 distinct files mentioned (>5)",
             "3 explicit phases (Phase 1/2/3)",
             "cross-module: auth/ + api/",
             "size 6.2 KB (>4 KB)"
-        ]
+        ],
+        "metrics": {
+            "size_bytes": 6348,
+            "distinct_files": 8,
+            "phases": 3,
+            "sensitive_hits": ["auth"],
+            "cross_module_hits": ["api", "service"]
+        }
     }
+
+``reasons`` is prose for a human and already translated; ``metrics`` carries
+the raw counts a caller can branch on.
 
 Signal table (each worth 1 point; suggest when ``score >= 3``):
 
@@ -56,6 +67,8 @@ THRESHOLD_SCORE = int(_config_get("complexity.threshold_score", 3))
 SIZE_THRESHOLD_BYTES = int(_config_get("complexity.size_threshold_bytes", 4 * 1024))
 DISTINCT_FILES_THRESHOLD = int(_config_get("complexity.distinct_files_threshold", 5))
 PHASES_THRESHOLD = int(_config_get("complexity.phases_threshold", 2))
+SPLIT_PHASES_THRESHOLD = int(_config_get("complexity.split_phases_threshold", 4))
+SPLIT_SIZE_THRESHOLD_BYTES = int(_config_get("complexity.split_size_threshold_bytes", 16384))
 
 # A single regex for paths matching common code/doc extensions. Anchored to
 # word boundaries to avoid false positives inside URLs or random tokens.
@@ -101,8 +114,23 @@ def _emit(payload: dict[str, Any]) -> None:
         sys.stdout.write(text)
 
 
+EMPTY_METRICS: dict[str, Any] = {
+    "size_bytes": 0,
+    "distinct_files": 0,
+    "phases": 0,
+    "sensitive_hits": [],
+    "cross_module_hits": [],
+}
+
+
 def _safe_failure(reason: str) -> dict[str, Any]:
-    return {"score": 0, "suggest_iterative": False, "reasons": [reason]}
+    return {
+        "score": 0,
+        "suggest_iterative": False,
+        "suggest_split": False,
+        "reasons": [reason],
+        "metrics": dict(EMPTY_METRICS),
+    }
 
 
 def _count_distinct_files(text: str) -> int:
@@ -141,7 +169,7 @@ def _cross_module_hits(text: str) -> list[str]:
     return hits
 
 
-def _score_plan(plan_path: Path) -> tuple[int, list[str]]:
+def _score_plan(plan_path: Path) -> tuple[int, list[str], dict[str, Any]]:
     try:
         text = plan_path.read_text(encoding="utf-8", errors="replace")
     except (OSError, UnicodeDecodeError) as exc:
@@ -200,7 +228,14 @@ def _score_plan(plan_path: Path) -> tuple[int, list[str]]:
         kws = " + ".join(cross_hits[:4])
         reasons.append(t("complexity.reasons.cross_module", kws=kws))
 
-    return score, reasons
+    metrics = {
+        "size_bytes": size_bytes,
+        "distinct_files": distinct_files,
+        "phases": phases,
+        "sensitive_hits": sensitive_hits,
+        "cross_module_hits": cross_hits,
+    }
+    return score, reasons, metrics
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -217,7 +252,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     try:
-        score, reasons = _score_plan(plan_path)
+        score, reasons, metrics = _score_plan(plan_path)
     except RuntimeError as exc:
         _emit(_safe_failure(str(exc)))
         return 0
@@ -225,11 +260,16 @@ def main(argv: list[str] | None = None) -> int:
         _emit(_safe_failure(t("complexity.error.internal", exc=exc.__class__.__name__)))
         return 0
 
+    suggest_split = (
+        int(metrics["phases"]) >= SPLIT_PHASES_THRESHOLD and int(metrics["size_bytes"]) > SPLIT_SIZE_THRESHOLD_BYTES
+    )
     _emit(
         {
             "score": score,
             "suggest_iterative": score >= THRESHOLD_SCORE,
+            "suggest_split": suggest_split,
             "reasons": reasons,
+            "metrics": metrics,
         }
     )
     return 0

@@ -65,9 +65,9 @@ To use a per-skill `.env` as the primary source:
 |---|---|
 | `SKILLS_PYTHON` | Preferred Python interpreter. |
 | `CLAUDE_AUTOMATION_PYTHON` | Python fallback. |
-| `CODEX_WRAPPER_TIMEOUT_SECONDS` | Global wall-clock override (seconds). Overrides the per-mode ceiling. |
+| `CODEX_WRAPPER_TIMEOUT_SECONDS` | Global wall-clock override (seconds). Takes absolute precedence and disables the size scaling, on both the wrapper and the callers that budget for it. Without it, the per-mode entry in `wrapper.mode_timeouts` is a floor and the wrapper raises its own ceiling with the size of the prompt it assembled. |
 | `CODEX_WRAPPER_IDLE_TIMEOUT_SECONDS` | Kill Codex after this many seconds without a single event on the stream. Overrides the per-mode `wrapper.mode_idle_timeouts` (180s for `ask` up to 600s for `delegate`, which legitimately runs long silent commands). `0` disables the idle guard and leaves only the wall clock. |
-| `CODEX_WRAPPER_CACHE_DIR` | Where `runs.jsonl` telemetry is written. Point it at a scratch directory to keep a test run from polluting or rotating away the real record. |
+| `CODEX_WRAPPER_CACHE_DIR` | Root of the local cache: `runs.jsonl` telemetry and the `bg_runs/` directories. Point it at a scratch directory to keep a test run from polluting or rotating away the real record — both test suites do exactly that. |
 | `CODEX_WRAPPER_MODEL` | Model slug passed as `codex exec -m`. Overrides `wrapper.model`, whose default (`auto`) resolves the strongest model the CLI advertises. |
 | `CODEX_WRAPPER_SERVICE_TIER` | Codex service tier. `priority` is the fast tier (default); `default` opts out and trades speed for quota. |
 | `CODEX_WRAPPER_CODEX_OVERRIDE` | Points to an alternative Python script invoked instead of the real `codex` (testing only — see `tests/fake_codex.py`). |
@@ -92,10 +92,11 @@ To use a per-skill `.env` as the primary source:
     dump_transcript_for_codex.py — filtered session transcript dump
     build_review_packet.py       — builds packet for `plan-review`
     normalize_codex_result.py    — normalises raw Codex output
-    codex_batch.py               — synchronous batch-ask / batch-delegate runner
+    codex_batch.py               — synchronous batch-ask / batch-delegate / batch-plan-review runner
     codex_bg.py                  — async runner (start/status/output/cancel/list)
     codex_dialogue.py            — iterative multi-turn dialogue (start/next-turn/finish/abort/status)
-    analyze_plan_complexity.py   — heuristic to auto-suggest plan-review-iter
+    analyze_plan_complexity.py   — complexity score, raw metrics and the iterative/split routing flags
+    split_plan_by_phase.py       — slices a phased plan into per-phase reviews plus a coherence slice
     codex_config.py              — centralised config + i18n (get/t/detect_locale)
     setup.py                     — interactive setup wizard
     set_locale.py                — non-interactive locale setter
@@ -125,6 +126,21 @@ Helpers in `scripts/codex_config.py`:
 **To customise**: copy fields from `config.default.json` into a new
 `config.local.json`. Only the keys present in the override are
 overridden (deep-merge).
+
+Settings worth knowing about:
+
+| Key | Default | What it controls |
+|---|---|---|
+| `wrapper.modes` | the five wrapper modes | The canonical list. `codex_bg.py start` validates against it, which is what stops a composed flow from being passed as a mode. |
+| `wrapper.mode_timeouts` | 300–1200s per mode | The wall-clock **floor**, no longer the ceiling. |
+| `wrapper.scale_free_bytes` | 20480 | Prompt bytes that cost no extra time. |
+| `wrapper.scale_bytes_per_unit` | 20480 | Each further chunk of this size adds one floor's worth of time. |
+| `wrapper.scale_ceiling_multiplier` | 4.0 | Hard cap, as a multiple of the floor. Callers budget against floor × this, so raising it also widens `subprocess_timeout_for`. |
+| `background.startup_probe_seconds` | 3.0 | How long `bg-start` watches a freshly spawned wrapper before trusting it. |
+| `complexity.split_phases_threshold` | 4 | Phases from which a plan is sliced instead of reviewed whole. |
+| `complexity.split_size_threshold_bytes` | 16384 | Size that must also be exceeded for the split to trigger. |
+| `split.min_phases` | 2 | Below this, `split_plan_by_phase.py` reports `not_splittable`. |
+| `split.max_head_bytes` | 6144 | Cap on the shared plan context repeated in every slice. |
 
 Locales supported out of the box: `pt-BR` (default) and `en-US`. To add
 a new locale, add a `locales.<code>` section in `config.local.json` (or
@@ -203,6 +219,12 @@ See `SKILL.md` for details. Summary:
 - `batch-ask` — Runs multiple questions in parallel (read-only).
 - `batch-delegate` — Multiple parallel executions with declared
   write-set.
+- `batch-plan-review` — Plan slices reviewed in parallel, each as a real
+  `plan-review`, with findings deduplicated across slices.
+
+Composed flows are not modes and cannot be passed to `codex_bg.py start`:
+`plan-review-iter` lives in `codex_dialogue.py`, and `plan-review-split` is
+`split_plan_by_phase.py` feeding `codex_batch.py batch-plan-review`.
 
 ## Roadmap
 

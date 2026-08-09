@@ -1,6 +1,6 @@
-"""Synchronous batch runner for ``codex ask`` / ``codex delegate``.
+"""Synchronous batch runner for ``codex ask`` / ``delegate`` / ``plan-review``.
 
-Two sub-modes:
+Three sub-modes:
 
   * ``batch-ask`` — fan-out of read-only questions. Failure of one item never
     cancels the others; the aggregator marks the run as ``partial`` when any
@@ -10,6 +10,12 @@ Two sub-modes:
     overlapping write-sets up front, then validates that each item's
     reported file changes stayed inside its declared write-set; otherwise
     the item is marked ``write_set_violated=true``.
+  * ``batch-plan-review`` — fan-out of plan slices, normally the output of
+    ``split_plan_by_phase.py``. Each item runs the wrapper in the real
+    ``plan-review`` mode, so every slice gets the review checklist and the
+    per-mode reasoning effort; routing this through ``ask`` would be faster
+    and much weaker. On top of ``items`` the result carries an ``aggregate``
+    block whose findings are deduplicated across slices.
 
 Input is a JSON file::
 
@@ -22,7 +28,7 @@ Input is a JSON file::
     }
 
 For ``batch-delegate`` each task uses ``"task"`` and ``"write_set"`` keys
-instead of ``"question"``.
+instead of ``"question"``; for ``batch-plan-review`` it uses ``"plan_file"``.
 
 Output is a JSON object on stdout::
 
@@ -55,6 +61,8 @@ WRAPPER = BIN_DIR / "invoke_codex_with_claude.py"
 
 sys.path.insert(0, str(BIN_DIR))
 from codex_config import (  # noqa: E402
+    EXIT_ERROR,
+    EXIT_OK,
     ensure_setup_complete,
     subprocess_timeout_for,
     t,
@@ -69,6 +77,14 @@ from codex_config import (
 DEFAULT_MAX_PARALLEL = int(_config_get("batch.default_max_parallel", 4))
 MAX_PARALLEL_CEILING = int(_config_get("batch.max_parallel_ceiling", 8))
 ITEM_SAFETY_TIMEOUT = int(_config_get("batch.item_safety_timeout_seconds", 900))
+
+SUB_MODES = ("batch-ask", "batch-delegate", "batch-plan-review")
+WRAPPER_MODE_BY_SUB_MODE = {
+    "batch-ask": "ask",
+    "batch-delegate": "delegate",
+    "batch-plan-review": "plan-review",
+}
+SEVERITY_ORDER = {"low": 0, "medium": 1, "high": 2}
 
 
 def _normalize_paths(paths: list[str], base: Path) -> list[Path]:
@@ -134,7 +150,19 @@ def _run_wrapper(sub_mode: str, task: dict[str, Any], batch_id: str) -> tuple[st
 
     payload_dir = Path(tempfile.mkdtemp(prefix=f"codex-batch-{batch_id}-"))
     try:
-        if sub_mode == "batch-ask":
+        if sub_mode == "batch-plan-review":
+            # Deliberately the real plan-review mode, not ask: only plan-review
+            # carries the review checklist and its per-mode reasoning effort.
+            cmd = [
+                _resolve_python(),
+                str(WRAPPER),
+                "plan-review",
+                "--cwd",
+                str(cwd),
+                "--last-message-file",
+                str(task.get("plan_file") or ""),
+            ]
+        elif sub_mode == "batch-ask":
             question = task.get("question") or ""
             q_path = payload_dir / f"{task_id}.txt"
             q_path.write_text(question, encoding="utf-8")
@@ -169,10 +197,7 @@ def _run_wrapper(sub_mode: str, task: dict[str, Any], batch_id: str) -> tuple[st
         env["CODEX_BATCH_ID"] = batch_id
         env["CODEX_BATCH_ITEM_ID"] = task_id
 
-        item_timeout = max(
-            ITEM_SAFETY_TIMEOUT,
-            subprocess_timeout_for("ask" if sub_mode == "batch-ask" else "delegate"),
-        )
+        item_timeout = max(ITEM_SAFETY_TIMEOUT, subprocess_timeout_for(WRAPPER_MODE_BY_SUB_MODE[sub_mode]))
         try:
             proc = subprocess.run(
                 cmd,
@@ -215,6 +240,73 @@ def _run_wrapper(sub_mode: str, task: dict[str, Any], batch_id: str) -> tuple[st
             payload_dir.rmdir()
         except OSError:
             pass
+
+
+def _finding_key(finding: dict[str, Any]) -> tuple[str, str]:
+    return (
+        " ".join((finding.get("title") or "").lower().split()),
+        " ".join((finding.get("location") or "").lower().split()),
+    )
+
+
+def _aggregate_findings(items: list[dict[str, Any]]) -> dict[str, Any]:
+    """Merge per-slice reviews into one result.
+
+    The same defect reported from two slices is one defect: dedupe by
+    (title, location) and keep the highest severity seen, recording every
+    slice that raised it. Coverage is the union of the categories swept, so
+    the count still means "categories reviewed", not "categories with
+    findings".
+    """
+    merged: dict[tuple[str, str], dict[str, Any]] = {}
+    coverage: dict[str, int] = {}
+    block_recommended = False
+    severity = "low"
+
+    for item in items:
+        result = item.get("result") or {}
+        slice_id = str(item.get("id") or "")
+        if result.get("block_recommended"):
+            block_recommended = True
+        if SEVERITY_ORDER.get(result.get("severity") or "low", 0) > SEVERITY_ORDER.get(severity, 0):
+            severity = result.get("severity") or "low"
+
+        for entry in result.get("coverage") or []:
+            if not isinstance(entry, dict):
+                continue
+            category = str(entry.get("category") or "")
+            if not category:
+                continue
+            coverage[category] = coverage.get(category, 0) + int(entry.get("findings_count") or 0)
+
+        for finding in result.get("findings") or []:
+            if not isinstance(finding, dict):
+                continue
+            key = _finding_key(finding)
+            existing = merged.get(key)
+            if existing is None:
+                clone = dict(finding)
+                clone["slices"] = [slice_id]
+                merged[key] = clone
+                continue
+            if slice_id and slice_id not in existing["slices"]:
+                existing["slices"].append(slice_id)
+            if SEVERITY_ORDER.get(finding.get("severity") or "low", 0) > SEVERITY_ORDER.get(
+                existing.get("severity") or "low", 0
+            ):
+                existing["severity"] = finding.get("severity")
+
+    findings = sorted(
+        merged.values(),
+        key=lambda f: (-SEVERITY_ORDER.get(f.get("severity") or "low", 0), f.get("title") or ""),
+    )
+    return {
+        "severity": severity,
+        "block_recommended": block_recommended,
+        "findings": findings,
+        "coverage": [{"category": c, "findings_count": n} for c, n in sorted(coverage.items())],
+        "duplicates_merged": sum(len(f["slices"]) for f in findings) - len(findings),
+    }
 
 
 def _run_batch(sub_mode: str, batch: dict[str, Any]) -> dict[str, Any]:
@@ -281,20 +373,23 @@ def _run_batch(sub_mode: str, batch: dict[str, Any]) -> dict[str, Any]:
         if violated:
             summary_parts.append(f"{violated} write_set_violated")
 
-    return {
+    payload: dict[str, Any] = {
         "status": agg_status,
         "batch_id": batch_id,
         "summary": "; ".join(summary_parts),
         "partial": agg_status == "partial",
         "items": items,
     }
+    if sub_mode == "batch-plan-review":
+        payload["aggregate"] = _aggregate_findings(items)
+    return payload
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=t("batch.cli.description"))
     parser.add_argument(
         "sub_mode",
-        choices=["batch-ask", "batch-delegate"],
+        choices=list(SUB_MODES),
         help=t("batch.cli.help.sub_mode"),
     )
     parser.add_argument("--input-file", required=True, help=t("batch.cli.help.input_file"))
@@ -315,11 +410,13 @@ def main(argv: list[str] | None = None) -> int:
                 ensure_ascii=False,
             )
         )
-        return 0
+        return EXIT_ERROR
 
     result = _run_batch(args.sub_mode, payload)
     print(json.dumps(result, ensure_ascii=False))
-    return 0
+    # "partial" is a failure for exit-code purposes: some item was not done,
+    # and a caller reading only the exit code has to notice that.
+    return EXIT_OK if result.get("status") == "ok" else EXIT_ERROR
 
 
 if __name__ == "__main__":

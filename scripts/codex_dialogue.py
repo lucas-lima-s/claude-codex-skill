@@ -12,7 +12,9 @@ Subcommands::
 
     start --plan-file <path> [--max-turns N] [--cwd ...]
         Initialise a new dialogue. Returns ``{dialogue_id, turn, status,
-        findings, summary}``.
+        wrapper_status, findings_payload}``. The envelope ``status`` is
+        ``error`` whenever the turn's wrapper failed, so a timed-out review
+        (which carries ``findings: []``) is never read as a spotless plan.
 
     next-turn --dialogue-id <id> --plan-file <path>
         Submit a revised plan for the next turn. Returns the new turn's
@@ -66,6 +68,8 @@ WRAPPER = BIN_DIR / "invoke_codex_with_claude.py"
 
 sys.path.insert(0, str(BIN_DIR))
 from codex_config import (  # noqa: E402
+    EXIT_ERROR,
+    EXIT_OK,
     ensure_setup_complete,
     subprocess_timeout_for,
     t,
@@ -88,7 +92,12 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+_last_emitted_status = ""
+
+
 def _emit(payload: dict[str, Any]) -> None:
+    global _last_emitted_status
+    _last_emitted_status = str(payload.get("status") or "")
     text = json.dumps(payload, ensure_ascii=False)
     try:
         sys.stdout.buffer.write(text.encode("utf-8"))
@@ -213,6 +222,20 @@ def _build_history(dialogue_dir: Path, up_to_turn: int) -> str:
     return text
 
 
+def _wrapper_status(findings_payload: dict[str, Any]) -> str:
+    return str(findings_payload.get("status") or "error")
+
+
+def _envelope_status(findings_payload: dict[str, Any]) -> str:
+    """The dialogue envelope must not report ``ok`` over a failed turn.
+
+    A turn whose wrapper timed out carries ``findings: []``, which is
+    indistinguishable from a spotless plan to anyone reading the envelope
+    alone.
+    """
+    return "error" if _wrapper_status(findings_payload) == "error" else "ok"
+
+
 def _stop_signal(dialogue_dir: Path, meta: dict[str, Any]) -> tuple[str | None, dict[str, Any]]:
     """Return (stop_reason, details). stop_reason is None when we should
     keep going."""
@@ -230,8 +253,11 @@ def _stop_signal(dialogue_dir: Path, meta: dict[str, Any]) -> tuple[str | None, 
         last = _read_findings(dialogue_dir, current_turn) or {}
 
         def _clean(p: dict[str, Any]) -> bool:
+            # A failed turn also carries no findings and low severity. Without
+            # this guard two consecutive timeouts would be read as convergence.
             return (
-                not (p.get("findings") or [])
+                _wrapper_status(p) != "error"
+                and not (p.get("findings") or [])
                 and (p.get("severity") or "low") == "low"
                 and not p.get("block_recommended")
             )
@@ -382,7 +408,8 @@ def cmd_start(args: argparse.Namespace) -> int:
     stop_reason, stop_details = _stop_signal(dialogue_dir, meta)
     _emit(
         {
-            "status": "ok",
+            "status": _envelope_status(findings),
+            "wrapper_status": _wrapper_status(findings),
             "dialogue_id": dialogue_id,
             "turn": 1,
             "max_turns": max_turns,
@@ -431,7 +458,8 @@ def cmd_next_turn(args: argparse.Namespace) -> int:
     stop_reason, stop_details = _stop_signal(dialogue_dir, meta)
     _emit(
         {
-            "status": "ok",
+            "status": _envelope_status(findings),
+            "wrapper_status": _wrapper_status(findings),
             "dialogue_id": args.dialogue_id,
             "turn": next_turn,
             "max_turns": int(meta.get("max_turns") or DEFAULT_MAX_TURNS),
@@ -626,7 +654,7 @@ def main(argv: list[str] | None = None) -> int:
         "finish": cmd_finish,
     }[args.subcommand]
     try:
-        return handler(args)
+        rc = handler(args)
     except Exception as exc:  # never raise out of CLI
         _emit(
             {
@@ -635,7 +663,12 @@ def main(argv: list[str] | None = None) -> int:
                 "subcommand": args.subcommand,
             }
         )
-        return 0
+        return EXIT_ERROR
+    # A turn whose wrapper failed emits envelope status=error; mirroring it
+    # here keeps a failed turn from looking like a completed one.
+    if rc:
+        return rc
+    return EXIT_ERROR if _last_emitted_status == "error" else EXIT_OK
 
 
 if __name__ == "__main__":

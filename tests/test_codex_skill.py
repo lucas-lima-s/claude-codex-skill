@@ -158,6 +158,32 @@ def _run_wrapper(
     return result, proc.stderr, elapsed
 
 
+def _run_wrapper_rc(
+    mode: str,
+    behavior: str,
+    args: list[str],
+    timeout_env: str = "10",
+    extra_env: dict[str, str] | None = None,
+    hard_timeout: float = 30.0,
+) -> tuple[dict[str, Any], int]:
+    """Same as ``_run_wrapper`` but surfaces the process exit code."""
+    env = _base_env(behavior=behavior, timeout=timeout_env, extra=extra_env)
+    proc = subprocess.run(
+        [PYTHON, str(WRAPPER), mode] + args,
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=hard_timeout,
+    )
+    try:
+        result = json.loads(proc.stdout or "{}")
+    except json.JSONDecodeError:
+        result = {"_parse_error": True, "_stdout": proc.stdout}
+    return result, proc.returncode
+
+
 @contextmanager
 def _tempdir():
     path = Path(tempfile.mkdtemp(prefix="codex-test-"))
@@ -1397,14 +1423,14 @@ def test_subprocess_timeout_respects_env(r: Runner) -> None:
     sys.path.insert(0, str(SKILL_DIR / "scripts"))
     import codex_config
 
-    baseline = codex_config.subprocess_timeout_for("plan-review")
     os.environ["CODEX_WRAPPER_TIMEOUT_SECONDS"] = "1200"
     try:
         raised = codex_config.subprocess_timeout_for("plan-review")
+        lowered = codex_config.subprocess_timeout_for("ask")
     finally:
         del os.environ["CODEX_WRAPPER_TIMEOUT_SECONDS"]
     r.ge(raised, 1200.0, "a raised wrapper timeout raises the caller's budget too")
-    r.ge(raised, baseline, "the override is not ignored in favour of the config")
+    r.eq(raised, lowered, "the override wins over the per-mode config for every mode")
 
 
 def test_coverage_reconciliation(r: Runner) -> None:
@@ -1659,6 +1685,362 @@ def test_reasoning_effort_override(r: Runner) -> None:
             r.fail("verify+invalid effort", "argv log not written")
 
 
+PHASED_PLAN = (
+    "# Big plan\n\nShared context every phase needs.\n\n"
+    "## Phase 1 — groundwork\nTouch a.py.\n\n"
+    "## Phase 2 — schema\nTouch b.sql, run a migration.\n\n"
+    "## Phase 3 — wiring\nTouch c.ts.\n\n"
+    "## Phase 4 — cleanup\nTouch d.md.\n"
+)
+
+
+def test_split_plan_by_phase(r: Runner) -> None:
+    r.section("split_plan_by_phase × slices + coherence")
+    script = SCRIPTS / "split_plan_by_phase.py"
+    if not script.exists():
+        r.fail("split_plan_by_phase.py present", "missing")
+        return
+
+    def _split(plan_path: Path, out_dir: Path) -> dict[str, Any]:
+        proc = subprocess.run(
+            [PYTHON, str(script), "--plan-file", str(plan_path), "--output-dir", str(out_dir)],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+        )
+        try:
+            return json.loads(proc.stdout or "{}")
+        except json.JSONDecodeError:
+            return {"_stdout": proc.stdout, "_stderr": proc.stderr}
+
+    with _tempdir() as tmp:
+        plan = tmp / "plan.md"
+        plan.write_text(PHASED_PLAN, encoding="utf-8")
+        data = _split(plan, tmp / "slices")
+
+        r.eq(data.get("status"), "ok", "phased plan splits")
+        r.eq(data.get("phases"), 4, "one slice per phase heading")
+        slices = data.get("slices") or []
+        r.eq(len(slices), 5, "N phases + 1 coherence slice")
+        r.eq(slices[-1].get("id"), "coherence", "the coherence slice comes last")
+
+        first = Path(slices[0]["path"]).read_text(encoding="utf-8")
+        r.in_("Shared context every phase needs.", first, "each slice repeats the plan head")
+        r.in_("Phase 4 — cleanup", first, "each slice carries the outline of the other phases")
+        r.in_("Touch a.py", first, "the slice carries its own phase body")
+        r.truthy("Touch d.md" not in first, "a phase slice does not carry another phase's body")
+
+        coherence = Path(slices[-1]["path"]).read_text(encoding="utf-8")
+        r.in_("Touch d.md", coherence, "the coherence slice carries the whole plan")
+
+        flat = tmp / "flat.md"
+        flat.write_text("# Plan\n\nNo phases here, just prose.\n", encoding="utf-8")
+        data = _split(flat, tmp / "flat_slices")
+        r.eq(data.get("status"), "not_splittable", "a plan without phase headings is not split")
+        r.eq(data.get("reason"), "no_phase_headings", "and says why")
+
+
+def test_batch_plan_review(r: Runner) -> None:
+    r.section("batch-plan-review × parallel slices, real plan-review mode")
+    batch_script = SCRIPTS / "codex_batch.py"
+    split_script = SCRIPTS / "split_plan_by_phase.py"
+    if not batch_script.exists() or not split_script.exists():
+        r.fail("batch + split scripts present", "missing")
+        return
+
+    with _tempdir() as tmp:
+        plan = tmp / "plan.md"
+        plan.write_text(PHASED_PLAN, encoding="utf-8")
+        proc = subprocess.run(
+            [PYTHON, str(split_script), "--plan-file", str(plan), "--output-dir", str(tmp / "slices")],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+        )
+        slices = (json.loads(proc.stdout or "{}") or {}).get("slices") or []
+        r.eq(len(slices), 5, "5 slices to review")
+
+        payload = {
+            "max_parallel": 5,
+            "tasks": [{"id": s["id"], "plan_file": s["path"], "cwd": str(SKILL_DIR)} for s in slices],
+        }
+        input_file = tmp / "batch.json"
+        input_file.write_text(json.dumps(payload), encoding="utf-8")
+
+        started = time.monotonic()
+        proc = subprocess.run(
+            [PYTHON, str(batch_script), "batch-plan-review", "--input-file", str(input_file)],
+            env=_base_env(behavior="delay_short"),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=120,
+        )
+        elapsed = time.monotonic() - started
+        result = json.loads(proc.stdout or "{}")
+
+        r.eq(result.get("status"), "ok", "every slice reviewed")
+        items = result.get("items") or []
+        r.eq(len(items), 5, "one item per slice")
+        r.truthy(
+            all((i.get("result") or {}).get("mode") == "plan-review" for i in items),
+            "every slice ran the real plan-review mode, not ask",
+        )
+        r.le(elapsed, 5 * 4.0, "slices run in parallel, not one after another")
+
+        aggregate = result.get("aggregate") or {}
+        findings = aggregate.get("findings") or []
+        r.eq(len(findings), 1, "the same finding across 5 slices collapses to one")
+        r.eq(len(findings[0].get("slices") or []), 5, "the merged finding records every source slice")
+        r.eq(aggregate.get("duplicates_merged"), 4, "4 duplicates merged away")
+
+        per_slice_categories = {c["category"] for c in ((items[0].get("result") or {}).get("coverage") or [])}
+        union_categories = {c["category"] for c in (aggregate.get("coverage") or [])}
+        r.eq(
+            union_categories,
+            per_slice_categories,
+            "coverage is the union of the categories swept, with no category counted twice",
+        )
+
+        # The fake's behavior is process-wide, so a mixed batch is out of reach
+        # here (see test_batch_ask_partial). An all-failing batch still proves
+        # the aggregate never invents findings out of failed slices.
+        proc = subprocess.run(
+            [PYTHON, str(batch_script), "batch-plan-review", "--input-file", str(input_file)],
+            env=_base_env(behavior="nonzero"),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=120,
+        )
+        result = json.loads(proc.stdout or "{}")
+        r.eq(result.get("status"), "error", "every slice failing → aggregate status=error")
+        r.eq(proc.returncode, 2, "a failed batch also exits non-zero")
+        r.eq(len(result.get("items") or []), 5, "a failed slice still reports an item")
+        r.eq(len((result.get("aggregate") or {}).get("findings") or []), 0, "no findings invented from failures")
+
+
+def test_aggregate_findings_unit(r: Runner) -> None:
+    r.section("batch aggregate × dedupe, severity and partial input")
+    sys.path.insert(0, str(SCRIPTS))
+    import codex_batch
+
+    items = [
+        {
+            "id": "phase-1",
+            "status": "ok",
+            "result": {
+                "severity": "low",
+                "block_recommended": False,
+                "coverage": [{"category": "design", "findings_count": 1}],
+                "findings": [
+                    {"severity": "low", "title": "Same defect", "location": "a.py:1"},
+                    {"severity": "low", "title": "Only here", "location": "b.py:2"},
+                ],
+            },
+        },
+        {
+            "id": "phase-2",
+            "status": "ok",
+            "result": {
+                "severity": "high",
+                "block_recommended": True,
+                "coverage": [
+                    {"category": "design", "findings_count": 1},
+                    {"category": "security", "findings_count": 1},
+                ],
+                # Same defect, different casing and spacing, higher severity.
+                "findings": [{"severity": "high", "title": "same  DEFECT", "location": "A.py:1"}],
+            },
+        },
+        {"id": "phase-3", "status": "error", "result": {}},
+    ]
+
+    agg = codex_batch._aggregate_findings(items)
+    titles = [f.get("title") for f in agg["findings"]]
+    r.eq(len(agg["findings"]), 2, "the duplicate collapses, the unique one survives")
+    r.eq(titles[0], "Same defect", "highest severity sorts first")
+    r.eq(agg["findings"][0]["severity"], "high", "the merged finding keeps the highest severity seen")
+    r.eq(sorted(agg["findings"][0]["slices"]), ["phase-1", "phase-2"], "both source slices recorded")
+    r.eq(agg["severity"], "high", "aggregate severity is the highest across slices")
+    r.truthy(agg["block_recommended"], "block_recommended is any(), not all()")
+    r.eq(len(agg["coverage"]), 2, "coverage unions the categories without duplicating design")
+    r.eq(agg["duplicates_merged"], 1, "one duplicate merged")
+
+
+def test_timeout_scales_with_prompt(r: Runner) -> None:
+    r.section("wall-clock ceiling scales with the assembled prompt")
+    sys.path.insert(0, str(SKILL_DIR / "scripts"))
+    import codex_config
+    import invoke_codex_with_claude as wrapper
+
+    base = wrapper._base_timeout("plan-review")
+    ceiling = wrapper.max_timeout_for("plan-review")
+
+    r.eq(wrapper._resolve_timeout("plan-review", 0), base, "no prompt → per-mode base")
+    r.eq(
+        wrapper._resolve_timeout("plan-review", wrapper.TIMEOUT_SCALE_FREE_BYTES),
+        base,
+        "prompt inside the free window → still the base",
+    )
+
+    one_unit = wrapper.TIMEOUT_SCALE_FREE_BYTES + wrapper.TIMEOUT_SCALE_BYTES_PER_UNIT
+    r.eq(
+        wrapper._resolve_timeout("plan-review", one_unit),
+        base * 2.0,
+        "one scale unit past the free window doubles the ceiling",
+    )
+
+    huge = wrapper._resolve_timeout("plan-review", 100 * 1024 * 1024)
+    r.eq(huge, ceiling, "an enormous prompt saturates at the ceiling, never beyond")
+    r.truthy(ceiling > base, "the ceiling is above the base, otherwise scaling is a no-op")
+
+    os.environ["CODEX_WRAPPER_TIMEOUT_SECONDS"] = "77"
+    try:
+        r.eq(
+            wrapper._resolve_timeout("plan-review", 100 * 1024 * 1024),
+            77.0,
+            "the env override wins over the scaling",
+        )
+    finally:
+        del os.environ["CODEX_WRAPPER_TIMEOUT_SECONDS"]
+
+    # The invariant that keeps a supervisor from killing a wrapper that is
+    # still inside its own budget.
+    codex_config.clear_cache()
+    for mode in wrapper.ALL_MODES:
+        budget = codex_config.subprocess_timeout_for(mode)
+        r.ge(budget, wrapper.max_timeout_for(mode), f"caller budget covers the {mode} ceiling")
+
+
+def test_analyze_exposes_raw_metrics(r: Runner) -> None:
+    r.section("analyze_plan_complexity × raw metrics")
+    script = SCRIPTS / "analyze_plan_complexity.py"
+    with _tempdir() as tmp:
+        plan = tmp / "plan.md"
+        plan.write_text(
+            "# Plan\n\n"
+            "## Phase 1\nTouch a.py and b.ts, run a migration.\n\n"
+            "## Phase 2\nTouch c.tsx, d.sql, e.go, f.rs, g.java.\n\n"
+            "## Phase 3\nWire the api handler to the service repo.\n",
+            encoding="utf-8",
+        )
+        proc = subprocess.run(
+            [PYTHON, str(script), "--plan-file", str(plan)],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+        )
+        data = json.loads(proc.stdout or "{}")
+        metrics = data.get("metrics") or {}
+        r.eq(metrics.get("phases"), 3, "phases counted")
+        r.eq(metrics.get("size_bytes"), plan.stat().st_size, "size_bytes matches the file")
+        r.ge(metrics.get("distinct_files") or 0, 7, "distinct files counted")
+        r.in_("migration", metrics.get("sensitive_hits") or [], "sensitive keywords listed raw")
+        r.in_("api", metrics.get("cross_module_hits") or [], "cross-module dirs listed raw")
+
+        missing = subprocess.run(
+            [PYTHON, str(script), "--plan-file", str(tmp / "nope.md")],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+        )
+        fallback = json.loads(missing.stdout or "{}")
+        r.truthy("metrics" in fallback, "metrics is present even on the soft-failure path")
+
+
+def test_wrapper_exit_codes(r: Runner) -> None:
+    r.section("wrapper × exit code mirrors status")
+    with _tempdir() as tmp:
+        plan = tmp / "plan.md"
+        plan.write_text("# Plan\n\nTouch scripts/set_locale.py.\n", encoding="utf-8")
+        common = ["--cwd", str(SKILL_DIR), "--last-message-file", str(plan)]
+
+        result, rc = _run_wrapper_rc("plan-review", "success", common)
+        r.eq(rc, 0, "status=ok → exit 0")
+        r.eq(result.get("status"), "ok", "status=ok still on stdout")
+
+        result, rc = _run_wrapper_rc("plan-review", "timeout", common, timeout_env="2", hard_timeout=25.0)
+        r.eq(rc, 2, "timeout → exit 2")
+        r.eq(result.get("status"), "error", "timeout still emits parseable JSON")
+        r.eq(result.get("error_class"), "timeout", "timeout keeps its error_class")
+
+        result, rc = _run_wrapper_rc("plan-review", "needs_input", common)
+        r.eq(rc, 3, "needs_input → exit 3")
+        r.eq(result.get("status"), "needs_input", "needs_input still on stdout")
+
+        result, rc = _run_wrapper_rc("plan-review", "invalid_json", common)
+        r.eq(rc, 2, "unparseable Codex reply → exit 2")
+
+
+def test_dialogue_error_envelope(r: Runner) -> None:
+    r.section("codex_dialogue × failed turn never reports ok")
+    dialogue = SCRIPTS / "codex_dialogue.py"
+    if not dialogue.exists():
+        r.fail("codex_dialogue.py present", "missing")
+        return
+
+    env = _base_env(behavior="timeout", timeout="2")
+    with _tempdir() as tmp:
+        plan = tmp / "plan.md"
+        plan.write_text("# Plan\nTouch foo.py.\n", encoding="utf-8")
+
+        codes: list[int] = []
+
+        def _turn(cmd: list[str]) -> dict[str, Any]:
+            proc = subprocess.run(
+                [PYTHON, str(dialogue)] + cmd,
+                env=env,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=90,
+            )
+            codes.append(proc.returncode)
+            try:
+                return json.loads(proc.stdout)
+            except json.JSONDecodeError:
+                return {}
+
+        first = _turn(
+            [
+                "start",
+                "--accepted-by-user",
+                "--plan-file",
+                str(plan),
+                "--cwd",
+                str(SKILL_DIR),
+                "--max-turns",
+                "3",
+            ]
+        )
+        r.eq(first.get("status"), "error", "turn 1 timed out → envelope status=error")
+        r.eq(first.get("wrapper_status"), "error", "envelope exposes wrapper_status")
+        dialogue_id = first.get("dialogue_id")
+        r.truthy(dialogue_id, "dialogue_id still returned on a failed turn")
+        if not dialogue_id:
+            return
+
+        second = _turn(["next-turn", "--dialogue-id", dialogue_id, "--plan-file", str(plan)])
+        r.eq(second.get("status"), "error", "turn 2 timed out → envelope status=error")
+        r.truthy(
+            second.get("stop_reason") != "converged",
+            "two failed turns are never read as convergence",
+        )
+        r.eq(codes[-1], 2, "a failed turn also exits non-zero")
+
+
 # ----------------------------------------------------------------------- main
 
 
@@ -1707,6 +2089,13 @@ def main() -> int:
     test_codex_config(r)
     test_analyze_plan_complexity(r)
     test_dialogue_lifecycle(r)
+    test_wrapper_exit_codes(r)
+    test_dialogue_error_envelope(r)
+    test_timeout_scales_with_prompt(r)
+    test_analyze_exposes_raw_metrics(r)
+    test_split_plan_by_phase(r)
+    test_batch_plan_review(r)
+    test_aggregate_findings_unit(r)
 
     duration = time.monotonic() - started
     print()
