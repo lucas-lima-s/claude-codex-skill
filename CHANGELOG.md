@@ -58,8 +58,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `wrapper.modes` in the config as the single canonical mode list, read by both
   the wrapper and `codex_bg.py`.
 
+- **Quota exhaustion is a classified failure**, not a generic non-zero exit.
+  `error_class: quota_exhausted` with the reset date lifted out of the Codex
+  refusal and into the user-facing summary. Previously this reached the user as
+  "Codex exited with non-zero status (1)", with the actionable part
+  ("try again at Aug 15th") left in the stderr nobody reads. A `batch-*` round
+  now stops dispatching once any item hits the wall: every item draws on the
+  same quota, so the remaining ones can only reproduce the same failure more
+  slowly. New `fake_codex.py` behaviour `quota_exhausted` reproduces the real
+  refusal string.
+- **Interactive budget for `plan-review-split`.** The splitter routes phase
+  slices as `interactive` under `split.phase_reasoning_effort`, and the
+  coherence slice as `background` under the higher
+  `split.coherence_reasoning_effort`. The coherence slice reads the whole plan
+  and is always the slowest, so keeping it on the critical path is what pushes
+  a round past `split.interactive_budget_seconds` (300s). It now goes to
+  `bg-start` while the phase findings are presented immediately.
+- The splitter writes a ready-to-run `batch_input.json` containing only the
+  interactive slices, and `codex_batch.py` forwards a per-task
+  `reasoning_effort` to the wrapper.
+- `split.effort_calibrated` is `false`: the per-effort durations have not been
+  measured against the real Codex yet, so the routing is sound but the specific
+  effort values are an estimate.
+
 ### Changed
 
+- `split.max_parallel` defaults to 3, down from the batcher's 4. A 7-way round
+  over a 47 KB plan was observed degrading badly (656s, 828s, 961s for slices
+  of equivalent size) and exhausting the account quota in one go.
 - `codex_bg.py` honours `CODEX_WRAPPER_CACHE_DIR` for its `bg_runs/`
   directories, mirroring the wrapper. `tests/test_codex_bg.py` now points at a
   temp sandbox: its runs against `fake_codex.py` were being written into the

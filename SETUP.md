@@ -141,6 +141,11 @@ Settings worth knowing about:
 | `complexity.split_size_threshold_bytes` | 16384 | Size that must also be exceeded for the split to trigger. |
 | `split.min_phases` | 2 | Below this, `split_plan_by_phase.py` reports `not_splittable`. |
 | `split.max_head_bytes` | 6144 | Cap on the shared plan context repeated in every slice. |
+| `split.phase_reasoning_effort` | `high` | Effort for the phase slices, which have to fit the interactive budget. |
+| `split.coherence_reasoning_effort` | `max` | Effort for the coherence slice, which runs in background and keeps full depth. |
+| `split.interactive_budget_seconds` | 300 | Wall-clock the interactive round is expected to fit in. |
+| `split.max_parallel` | 3 | Concurrent slices. Every item draws on the same Codex quota at once, and a 7-way round was observed both degrading and exhausting the account quota. |
+| `split.effort_calibrated` | `false` | Flip to `true` once the per-effort durations have been measured against the real Codex. While false, the effort values above are an estimate. |
 
 Locales supported out of the box: `pt-BR` (default) and `en-US`. To add
 a new locale, add a `locales.<code>` section in `config.local.json` (or

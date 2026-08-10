@@ -51,6 +51,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -142,11 +143,28 @@ def _check_write_set_violation(declared: list[Path], reported: dict[str, list[st
     return False
 
 
-def _run_wrapper(sub_mode: str, task: dict[str, Any], batch_id: str) -> tuple[str, dict[str, Any]]:
+def _run_wrapper(
+    sub_mode: str,
+    task: dict[str, Any],
+    batch_id: str,
+    quota_stop: threading.Event | None = None,
+) -> tuple[str, dict[str, Any]]:
     """Run one wrapper invocation. Returns (id, result_dict)."""
     task_id = str(task.get("id") or uuid.uuid4().hex[:8])
     cwd = task.get("cwd") or os.getcwd()
     started = time.monotonic()
+
+    # Every item draws on the same Codex quota, so once one item reports it
+    # exhausted the rest cannot succeed. Starting them anyway only makes the
+    # user wait longer for the same failure.
+    if quota_stop is not None and quota_stop.is_set():
+        return task_id, {
+            "status": "error",
+            "summary": t("batch.summary.skipped_quota"),
+            "error_class": "quota_exhausted",
+            "duration_seconds": 0.0,
+            "result": {},
+        }
 
     payload_dir = Path(tempfile.mkdtemp(prefix=f"codex-batch-{batch_id}-"))
     try:
@@ -191,6 +209,9 @@ def _run_wrapper(sub_mode: str, task: dict[str, Any], batch_id: str) -> tuple[st
         target = task.get("target_path")
         if target:
             cmd += ["--target-path", str(target)]
+        effort = task.get("reasoning_effort")
+        if effort:
+            cmd += ["--reasoning-effort", str(effort)]
 
         env = os.environ.copy()
         env["CODEX_WRAPPER_DISABLE_HEARTBEAT"] = "1"
@@ -221,8 +242,12 @@ def _run_wrapper(sub_mode: str, task: dict[str, Any], batch_id: str) -> tuple[st
         except json.JSONDecodeError:
             wrapper_result = {}
 
+        if wrapper_result.get("error_class") == "quota_exhausted" and quota_stop is not None:
+            quota_stop.set()
+
         item: dict[str, Any] = {
             "status": wrapper_result.get("status", "error"),
+            "error_class": wrapper_result.get("error_class", ""),
             "summary": wrapper_result.get("summary", "")[:500],
             "duration_seconds": time.monotonic() - started,
             "result": wrapper_result,
@@ -334,8 +359,9 @@ def _run_batch(sub_mode: str, batch: dict[str, Any]) -> dict[str, Any]:
     batch_id = uuid.uuid4().hex[:10]
 
     items: list[dict[str, Any]] = []
+    quota_stop = threading.Event()
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_parallel) as pool:
-        futures = {pool.submit(_run_wrapper, sub_mode, task, batch_id): task for task in tasks}
+        futures = {pool.submit(_run_wrapper, sub_mode, task, batch_id, quota_stop): task for task in tasks}
         for future in concurrent.futures.as_completed(futures):
             task = futures[future]
             try:
@@ -372,12 +398,16 @@ def _run_batch(sub_mode: str, batch: dict[str, Any]) -> dict[str, Any]:
         violated = sum(1 for i in items if i.get("write_set_violated"))
         if violated:
             summary_parts.append(f"{violated} write_set_violated")
+    quota_hit = sum(1 for i in items if i.get("error_class") == "quota_exhausted")
+    if quota_hit:
+        summary_parts.append(f"{quota_hit} quota_exhausted")
 
     payload: dict[str, Any] = {
         "status": agg_status,
         "batch_id": batch_id,
         "summary": "; ".join(summary_parts),
         "partial": agg_status == "partial",
+        "quota_exhausted": bool(quota_hit),
         "items": items,
     }
     if sub_mode == "batch-plan-review":

@@ -133,6 +133,20 @@ location, each naming the slices that raised it. A plan with no phase headings
 returns `not_splittable` and falls back to the monolithic review, rather than
 reviewing one slice and calling it coverage.
 
+The slices are routed by how long they can afford to take. Phase slices are
+interactive and sized to fit `split.interactive_budget_seconds` (300s); the
+coherence slice reads the whole plan, is always the slowest, and goes to
+`bg-start` so it never holds the round hostage. You get the phase findings
+inside the budget and collect the structural one by `run_id`.
+
+Parallelism is deliberately capped at 3. Every item of a batch draws on the
+same Codex quota simultaneously, so a wide round costs N reviews at once: a
+7-way round over a 47 KB plan was observed degrading badly and exhausting an
+account's quota in a single shot. When that happens the wrapper reports
+`error_class: quota_exhausted` with the reset date instead of a generic
+non-zero exit, and the batch stops dispatching rather than driving the
+remaining slices into the same wall.
+
 ## Security
 
 - **`delegate` runs with `--sandbox danger-full-access`** — Codex can

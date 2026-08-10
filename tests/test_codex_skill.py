@@ -1826,6 +1826,166 @@ def test_batch_plan_review(r: Runner) -> None:
         r.eq(len((result.get("aggregate") or {}).get("findings") or []), 0, "no findings invented from failures")
 
 
+def test_quota_exhaustion_detection(r: Runner) -> None:
+    r.section("quota exhaustion is classified, not buried in a generic failure")
+    sys.path.insert(0, str(SCRIPTS))
+    import invoke_codex_with_claude as wrapper
+
+    real = (
+        "ERROR: You've hit your usage limit. Upgrade to Pro "
+        "(https://chatgpt.com/explore/pro), visit "
+        "https://chatgpt.com/codex/settings/usage to purchase more credits "
+        "or try again at Aug 15th, 2026 5:45 PM."
+    )
+    r.eq(
+        wrapper.detect_quota_exhaustion(real),
+        "Aug 15th, 2026 5:45 PM",
+        "the reset date is lifted out of the Codex stderr",
+    )
+    r.eq(
+        wrapper.detect_quota_exhaustion("You have exceeded your quota."),
+        "",
+        "quota without a date returns empty, not None",
+    )
+    r.truthy(
+        wrapper.detect_quota_exhaustion("Codex exited with non-zero status (1)") is None,
+        "an ordinary failure is not misread as a quota problem",
+    )
+    r.truthy(
+        wrapper.detect_quota_exhaustion("", "") is None,
+        "empty diagnostics are not a quota problem",
+    )
+    r.eq(
+        wrapper.detect_quota_exhaustion("", real),
+        "Aug 15th, 2026 5:45 PM",
+        "raw stdout is searched too, not only stderr",
+    )
+
+    with _tempdir() as tmp:
+        plan = tmp / "plan.md"
+        plan.write_text("# Plan\n\nTouch scripts/set_locale.py.\n", encoding="utf-8")
+        result, rc = _run_wrapper_rc(
+            "plan-review",
+            "quota_exhausted",
+            ["--cwd", str(SKILL_DIR), "--last-message-file", str(plan)],
+        )
+        r.eq(result.get("error_class"), "quota_exhausted", "the wrapper classifies it end to end")
+        r.eq(rc, 2, "quota exhaustion still exits non-zero")
+        r.in_("Aug 15th", result.get("summary") or "", "the reset date reaches the user's summary")
+
+
+def test_split_routing(r: Runner) -> None:
+    r.section("split × interactive phases, background coherence")
+    script = SCRIPTS / "split_plan_by_phase.py"
+    with _tempdir() as tmp:
+        plan = tmp / "plan.md"
+        plan.write_text(PHASED_PLAN, encoding="utf-8")
+        proc = subprocess.run(
+            [
+                PYTHON,
+                str(script),
+                "--plan-file",
+                str(plan),
+                "--output-dir",
+                str(tmp / "slices"),
+                "--cwd",
+                str(SKILL_DIR),
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+        )
+        data = json.loads(proc.stdout or "{}")
+        slices = data.get("slices") or []
+        phases = [s for s in slices if s["kind"] == "phase"]
+        coherence = [s for s in slices if s["kind"] == "coherence"]
+
+        r.truthy(all(s["route"] == "interactive" for s in phases), "every phase slice is interactive")
+        r.eq(coherence[0]["route"], "background", "the coherence slice is routed to background")
+        r.truthy(
+            all(s["reasoning_effort"] == phases[0]["reasoning_effort"] for s in phases),
+            "phase slices share one effort",
+        )
+        r.truthy(
+            coherence[0]["reasoning_effort"] != phases[0]["reasoning_effort"],
+            "coherence keeps a different (higher) effort than the phases",
+        )
+
+        batch = json.loads(Path(data["batch_input"]).read_text(encoding="utf-8"))
+        ids = [t["id"] for t in batch["tasks"]]
+        r.eq(len(ids), len(phases), "batch_input carries only the interactive slices")
+        r.truthy("coherence" not in ids, "the coherence slice stays off the critical path")
+        r.truthy(all(t.get("reasoning_effort") for t in batch["tasks"]), "each task carries its effort")
+        r.le(batch["max_parallel"], 4, "parallelism is capped low enough to avoid self-contention")
+        r.eq(batch["tasks"][0]["cwd"], str(SKILL_DIR), "--cwd reaches the batch input")
+
+
+def test_batch_effort_passthrough(r: Runner) -> None:
+    r.section("batch passes reasoning_effort through to the wrapper")
+    with _tempdir() as tmp:
+        plan = tmp / "slice.md"
+        plan.write_text("# Slice\n\nTouch scripts/set_locale.py.\n", encoding="utf-8")
+        argv_log = tmp / "argv.json"
+        batch = {
+            "max_parallel": 1,
+            "tasks": [
+                {
+                    "id": "s1",
+                    "plan_file": str(plan),
+                    "cwd": str(SKILL_DIR),
+                    "reasoning_effort": "medium",
+                }
+            ],
+        }
+        input_file = tmp / "batch.json"
+        input_file.write_text(json.dumps(batch), encoding="utf-8")
+        subprocess.run(
+            [PYTHON, str(BATCHER), "batch-plan-review", "--input-file", str(input_file)],
+            env=_base_env(behavior="success", extra={"FAKE_CODEX_ARGV_LOG_FILE": str(argv_log)}),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=60,
+        )
+        if argv_log.exists():
+            argv = " ".join(json.loads(argv_log.read_text(encoding="utf-8")).get("argv", []))
+            r.in_("model_reasoning_effort=medium", argv, "the per-task effort reaches the Codex CLI")
+        else:
+            r.fail("batch effort passthrough", "argv log not written")
+
+
+def test_batch_stops_on_quota(r: Runner) -> None:
+    r.section("batch stops spending once quota is gone")
+    with _tempdir() as tmp:
+        plan = tmp / "slice.md"
+        plan.write_text("# Slice\n\nTouch scripts/set_locale.py.\n", encoding="utf-8")
+        batch = {
+            "max_parallel": 1,
+            "tasks": [{"id": f"s{i}", "plan_file": str(plan), "cwd": str(SKILL_DIR)} for i in range(1, 6)],
+        }
+        input_file = tmp / "batch.json"
+        input_file.write_text(json.dumps(batch), encoding="utf-8")
+        proc = subprocess.run(
+            [PYTHON, str(BATCHER), "batch-plan-review", "--input-file", str(input_file)],
+            env=_base_env(behavior="quota_exhausted"),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=120,
+        )
+        result = json.loads(proc.stdout or "{}")
+        items = result.get("items") or []
+        r.truthy(result.get("quota_exhausted"), "the batch reports the quota wall explicitly")
+        r.eq(len(items), 5, "every task still reports an item")
+        skipped = [i for i in items if "quota" in (i.get("summary") or "").lower()]
+        r.ge(len(skipped), 1, "later items are skipped instead of burning the same wall again")
+        r.eq(proc.returncode, 2, "a quota-stopped batch exits non-zero")
+
+
 def test_aggregate_findings_unit(r: Runner) -> None:
     r.section("batch aggregate × dedupe, severity and partial input")
     sys.path.insert(0, str(SCRIPTS))
@@ -2096,6 +2256,10 @@ def main() -> int:
     test_split_plan_by_phase(r)
     test_batch_plan_review(r)
     test_aggregate_findings_unit(r)
+    test_quota_exhaustion_detection(r)
+    test_split_routing(r)
+    test_batch_effort_passthrough(r)
+    test_batch_stops_on_quota(r)
 
     duration = time.monotonic() - started
     print()

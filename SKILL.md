@@ -254,20 +254,40 @@ dependencies, contradictions, boundary gaps. A defect visible only when
 reading phase 2's detail alongside phase 5's detail can still escape; say so
 if the user asks how exhaustive the split review was.
 
+**Two routes, because a review nobody waits for is worthless.** The splitter
+routes each slice: phase slices are `interactive` and must come back inside
+`split.interactive_budget_seconds` (300s), so they carry the reduced
+`split.phase_reasoning_effort`. The coherence slice is `background`: it reads
+the whole plan, it is always the slowest, and it keeps the higher
+`split.coherence_reasoning_effort`. Keeping it on the critical path is what
+pushes a round past the budget.
+
 **Execution:**
 
 ```bash
-# 1. Slice. Returns {status, output_dir, phases, slices:[{id, kind, heading, path, bytes}]}
+# 1. Slice. Also writes a ready-to-run batch_input.json with the interactive
+#    slices only, and reports the route and effort of each slice.
 "$SKILLS_PYTHON" "$USERPROFILE/.claude/skills/codex/scripts/split_plan_by_phase.py" \
-  --plan-file "<plan path>"
+  --plan-file "<plan path>" --cwd "<cwd>"
 
-# 2. Build the batch input in $env:TEMP from the slices:
-#    {"max_parallel": 6, "tasks": [{"id": "phase-1", "plan_file": "...", "cwd": "<cwd>"}, ...]}
-
-# 3. Review every slice in parallel, each as a real plan-review
+# 2. Interactive round: the phase slices, in parallel.
 "$SKILLS_PYTHON" "$USERPROFILE/.claude/skills/codex/scripts/codex_batch.py" \
-  batch-plan-review --input-file "<batch.json>"
+  batch-plan-review --input-file "<output_dir>/batch_input.json"
+
+# 3. Structural round, off the critical path. Show the run_id immediately.
+"$SKILLS_PYTHON" "$USERPROFILE/.claude/skills/codex/scripts/codex_bg.py" \
+  start plan-review --cwd "<cwd>" \
+  --last-message-file "<output_dir>/coherence.md"
 ```
+
+Present the interactive findings as soon as step 2 returns; do not hold them
+waiting for step 3. Tell the user the structural review is running and give
+them the `run_id`, then collect it with `bg-output` when they ask.
+
+**`effort_calibrated: false` in the splitter output** means the per-effort
+durations have never been measured against the real Codex. The routing is
+sound; the specific effort values are an estimate. Say so if the user asks
+whether 300s is guaranteed.
 
 **`status: not_splittable`** means the plan has no `Phase N` / `Fase N`
 headings. Fall back to the monolithic `plan-review` and tell the user the
@@ -620,6 +640,19 @@ blockquote.
 
 **All modes, status=error:** header with `— **ERROR**`, same table,
 summary as a blockquote, ask whether to retry.
+
+**`error_class: quota_exhausted`** is the one error where retrying is wrong.
+The Codex quota is gone and the summary carries the reset date. Report it,
+give the date, and do **not** offer a retry or start another run. In a
+`batch-*` result, `quota_exhausted: true` means the remaining items were
+skipped on purpose rather than run into the same wall — say which slices were
+actually reviewed and which were not.
+
+**Quota is the reason parallel rounds are capped.** Every item of a `batch-*`
+draws on the same quota at the same time, so an N-way round costs N reviews at
+once. `split.max_parallel` defaults to 3 for that reason, not for politeness.
+Before firing a wide round over a large plan, tell the user how many Codex
+runs it is about to spend.
 
 ## Inviolable rules
 

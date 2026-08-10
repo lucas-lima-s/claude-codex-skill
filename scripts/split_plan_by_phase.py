@@ -15,9 +15,18 @@ Every slice repeats two things so a reviewer is never reading blind:
     context and the goals), truncated at ``split.max_head_bytes``;
   * the outline of every phase heading, with the slice's own phase marked.
 
+Each slice is also routed. Phase slices are ``interactive``: they are the ones
+that must come back inside ``split.interactive_budget_seconds``, so they carry
+``split.phase_reasoning_effort``. The coherence slice is ``background``: it
+reads the whole plan, it is always the slowest, and keeping it on the critical
+path is what pushes a round past the budget. It keeps the higher
+``split.coherence_reasoning_effort`` and is meant for ``codex_bg.py start``.
+A ready-to-run ``batch_input.json`` with only the interactive slices is written
+next to them.
+
 CLI::
 
-    split_plan_by_phase.py --plan-file <path> [--output-dir <dir>]
+    split_plan_by_phase.py --plan-file <path> [--output-dir <dir>] [--cwd <repo>]
 
 Output JSON (stdout, single line, UTF-8)::
 
@@ -25,14 +34,23 @@ Output JSON (stdout, single line, UTF-8)::
         "status": "ok",
         "output_dir": "...",
         "phases": 6,
+        "batch_input": ".../batch_input.json",
+        "interactive_budget_seconds": 300,
+        "effort_calibrated": false,
         "slices": [
             {"id": "phase-1", "kind": "phase", "heading": "## Phase 1 — ...",
-             "path": ".../phase_1.md", "bytes": 4211},
+             "path": ".../phase_1.md", "bytes": 4211,
+             "reasoning_effort": "high", "route": "interactive"},
             ...
             {"id": "coherence", "kind": "coherence", "heading": "",
-             "path": ".../coherence.md", "bytes": 39467}
+             "path": ".../coherence.md", "bytes": 39467,
+             "reasoning_effort": "max", "route": "background"}
         ]
     }
+
+``effort_calibrated`` is false while the per-effort durations have not been
+measured against the real Codex: the routing is sound, the specific effort
+values are an estimate.
 
 A plan with no ``Phase N`` / ``Fase N`` headings is not an error and not a
 degraded split: it returns ``{"status": "not_splittable", "reason":
@@ -48,6 +66,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -60,6 +79,11 @@ from codex_config import t  # noqa: E402
 
 MIN_PHASES_TO_SPLIT = int(_config_get("split.min_phases", 2))
 MAX_HEAD_BYTES = int(_config_get("split.max_head_bytes", 6144))
+PHASE_EFFORT = str(_config_get("split.phase_reasoning_effort", "high"))
+COHERENCE_EFFORT = str(_config_get("split.coherence_reasoning_effort", "max"))
+INTERACTIVE_BUDGET_SECONDS = int(_config_get("split.interactive_budget_seconds", 300))
+SPLIT_MAX_PARALLEL = int(_config_get("split.max_parallel", 3))
+EFFORT_CALIBRATED = bool(_config_get("split.effort_calibrated", False))
 OUTPUT_PREFIX = "codex_split_"
 
 
@@ -128,6 +152,28 @@ def _compose_coherence_slice(text: str, headings: list[str]) -> str:
     return "\n\n---\n\n".join(parts) + "\n"
 
 
+def _batch_input(slices: list[dict[str, Any]], cwd: str) -> dict[str, Any]:
+    """Ready-to-run input for ``codex_batch.py batch-plan-review``.
+
+    Only the interactive slices go in. The coherence slice is the one that has
+    to read the whole plan, so keeping it on the critical path is what pushes
+    the round past the interactive budget; it is meant for ``bg-start``.
+    """
+    return {
+        "max_parallel": SPLIT_MAX_PARALLEL,
+        "tasks": [
+            {
+                "id": s["id"],
+                "plan_file": s["path"],
+                "cwd": cwd,
+                "reasoning_effort": s["reasoning_effort"],
+            }
+            for s in slices
+            if s["route"] == "interactive"
+        ],
+    }
+
+
 def _output_dir(plan_path: Path, explicit: str | None) -> Path:
     if explicit:
         return Path(explicit)
@@ -139,7 +185,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=t("split.cli.description"))
     parser.add_argument("--plan-file", required=True, help=t("split.cli.help.plan_file"))
     parser.add_argument("--output-dir", default=None, help=t("split.cli.help.output_dir"))
+    parser.add_argument("--cwd", default=None, help=t("split.cli.help.cwd"))
     args = parser.parse_args(argv)
+    cwd = args.cwd or os.getcwd()
 
     plan_path = Path(args.plan_file)
     if not plan_path.is_file():
@@ -184,6 +232,8 @@ def main(argv: list[str] | None = None) -> int:
                     "heading": heading,
                     "path": str(path),
                     "bytes": len(content.encode("utf-8")),
+                    "reasoning_effort": PHASE_EFFORT,
+                    "route": "interactive",
                 }
             )
 
@@ -197,10 +247,22 @@ def main(argv: list[str] | None = None) -> int:
                 "heading": "",
                 "path": str(coherence_path),
                 "bytes": len(coherence.encode("utf-8")),
+                "reasoning_effort": COHERENCE_EFFORT,
+                "route": "background",
             }
         )
     except OSError as exc:
         _emit({"status": "error", "reason": f"cannot_write_slice: {exc.__class__.__name__}"})
+        return 0
+
+    batch_input_path = out_dir / "batch_input.json"
+    try:
+        batch_input_path.write_text(
+            json.dumps(_batch_input(slices, cwd), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    except OSError as exc:
+        _emit({"status": "error", "reason": f"cannot_write_batch_input: {exc.__class__.__name__}"})
         return 0
 
     _emit(
@@ -209,6 +271,9 @@ def main(argv: list[str] | None = None) -> int:
             "output_dir": str(out_dir),
             "phases": len(phases),
             "slices": slices,
+            "batch_input": str(batch_input_path),
+            "interactive_budget_seconds": INTERACTIVE_BUDGET_SECONDS,
+            "effort_calibrated": EFFORT_CALIBRATED,
         }
     )
     return 0

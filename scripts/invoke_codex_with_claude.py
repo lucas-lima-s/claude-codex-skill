@@ -73,6 +73,7 @@ import argparse
 import json
 import os
 import random
+import re
 import shutil
 import signal
 import subprocess
@@ -846,6 +847,21 @@ def _kill_process_tree(pid: int) -> None:
 
 MAX_CAPTURED_STDOUT_BYTES = 2 * 1024 * 1024
 MAX_CAPTURED_STDERR_LINES = 50
+
+# Running out of Codex quota is an actionable failure with a known recovery
+# date, and it is indistinguishable from any other non-zero exit unless it is
+# read out of the diagnostics. Left unclassified it reaches the user as
+# "Codex exited with non-zero status (1)", which says nothing about what to do.
+QUOTA_ERROR_MARKERS = (
+    "usage limit",
+    "quota exceeded",
+    "exceeded your quota",
+    "purchase more credits",
+    "out of credits",
+    "insufficient_quota",
+)
+QUOTA_RESET_RE = re.compile(r"try again (?:at|on|after)\s+([^.\n]{3,80})", re.IGNORECASE)
+
 SERVICE_TIER_ERROR_MARKERS = ("service_tier", "service tier")
 SERVICE_TIER_REJECTION_MARKERS = (
     "unsupported",
@@ -1160,6 +1176,23 @@ def _run_codex_once(
             pass
 
 
+def detect_quota_exhaustion(*diagnostics: str) -> str | None:
+    """Return the reset hint when Codex refused for lack of quota, else None.
+
+    The hint is the free-form date Codex reports ("Aug 15th, 2026 5:45 PM")
+    and comes back empty when it names no date, so callers distinguish
+    "no quota, unknown reset" from "not a quota problem" by the None.
+    """
+    blob = "\n".join(d for d in diagnostics if d)
+    if not blob:
+        return None
+    lowered = blob.lower()
+    if not any(marker in lowered for marker in QUOTA_ERROR_MARKERS):
+        return None
+    match = QUOTA_RESET_RE.search(blob)
+    return match.group(1).strip() if match else ""
+
+
 def _looks_like_service_tier_error(diagnostics: str) -> bool:
     """True only for a message that names the tier *and* rejects it.
 
@@ -1381,6 +1414,13 @@ def _invoke_codex(
     if outcome.error_summary is not None:
         error = _generic_error(mode, started_at, outcome.error_summary)
         error["error_class"] = outcome.termination
+        reset_hint = detect_quota_exhaustion(outcome.stderr_tail, outcome.raw_output)
+        if reset_hint is not None:
+            error["error_class"] = "quota_exhausted"
+            error["summary"] = t(
+                "wrapper.error.quota_exhausted",
+                reset=reset_hint or t("wrapper.error.quota_reset_unknown"),
+            )
         return error, retry_count, outcome.exit_code, outcome
 
     normalized = normalize(outcome.raw_output, mode=mode)

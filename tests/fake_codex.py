@@ -8,6 +8,7 @@ with ``CODEX_WRAPPER_CODEX_OVERRIDE`` pointing here. Behavior is selected via
     success        Valid JSON review packet written to -o; exit 0.
     delegate_ok    Valid JSON delegate packet (created/edited/deleted/...).
     nonzero        Exit 2 with no output.
+    quota_exhausted Exit 1 with the real "hit your usage limit" refusal on stderr.
     invalid_json   Plain prose written to -o; exit 0.
     needs_input    JSON with status=needs_input and questions[].
     partial        Truncated JSON object (half-written).
@@ -224,6 +225,17 @@ def main() -> int:
     if behavior == "nonzero":
         sys.stderr.write("fake codex: simulated failure\n")
         return 2
+
+    if behavior == "quota_exhausted":
+        # Verbatim shape of the real refusal, so the wrapper's classifier is
+        # tested against the string it will actually meet.
+        sys.stderr.write(
+            "ERROR: You've hit your usage limit. Upgrade to Pro "
+            "(https://chatgpt.com/explore/pro), visit "
+            "https://chatgpt.com/codex/settings/usage to purchase more "
+            "credits or try again at Aug 15th, 2026 5:45 PM.\n"
+        )
+        return 1
 
     if behavior == "invalid_json":
         _write(args.output, "I am not JSON. Just some prose Codex sometimes leaks.\n")

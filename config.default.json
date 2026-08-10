@@ -57,7 +57,12 @@
     },
     "split": {
       "min_phases": 2,
-      "max_head_bytes": 6144
+      "max_head_bytes": 6144,
+      "phase_reasoning_effort": "high",
+      "coherence_reasoning_effort": "max",
+      "interactive_budget_seconds": 300,
+      "max_parallel": 3,
+      "effort_calibrated": false
     },
     "complexity": {
       "threshold_score": 3,
@@ -147,6 +152,7 @@
       "split.cli.description": "Fatia um plano por fase, gerando uma fatia por fase mais uma fatia de coerência estrutural.",
       "split.cli.help.plan_file": "Caminho do arquivo markdown do plano.",
       "split.cli.help.output_dir": "Diretório de saída das fatias (default: pasta temporária derivada do caminho do plano).",
+      "split.cli.help.cwd": "cwd do repositório usado ao montar o batch_input.json (default: diretório corrente).",
       "split.preface.phase": "Você está revisando a FASE {n} de {total} de um plano maior. Revise esta fase com profundidade total. As demais fases aparecem apenas como índice, para você enxergar fronteiras e dependências — não as revise.",
       "split.preface.coherence": "Você está revisando a ESTRUTURA de um plano de {total} fases, não a implementação. Procure exclusivamente: ordem errada entre fases, dependência de uma fase em algo que só existe depois, contradição entre fases, lacuna na fronteira entre fases e critério de conclusão ausente. Não aponte detalhe interno de fase — outro revisor cobre isso.",
       "split.section.head": "## Contexto do plano (comum a todas as fases)",
@@ -155,6 +161,9 @@
       "split.section.full_plan": "## Plano completo",
       "split.outline.current": "   <-- esta fatia",
       "split.hint.not_splittable": "O plano não tem títulos de fase (Phase N / Fase N). Use o plan-review monolítico: não há como fatiar sem inventar fronteiras.",
+      "wrapper.error.quota_exhausted": "Cota do Codex esgotada: nenhuma revisão foi feita. A cota volta em {reset}. Rodadas paralelas (batch-*) consomem a cota de todos os itens de uma vez.",
+      "wrapper.error.quota_reset_unknown": "data não informada pelo Codex",
+      "batch.summary.skipped_quota": "Item não executado: a cota do Codex esgotou em outro item deste mesmo batch.",
 
       "complexity.cli.description": "Pontua a complexidade de um plano para decidir se vale sugerir o modo iterativo (plan-review-iter) em vez do plan-review one-shot.",
       "complexity.cli.help.plan_file": "Caminho do arquivo markdown do plano.",
@@ -251,6 +260,7 @@
       "split.cli.description": "Split a phased plan into one slice per phase plus a structural coherence slice.",
       "split.cli.help.plan_file": "Path to the plan markdown file.",
       "split.cli.help.output_dir": "Where to write the slices (default: a temp folder derived from the plan path).",
+      "split.cli.help.cwd": "Repository cwd used when building batch_input.json (default: current directory).",
       "split.preface.phase": "You are reviewing PHASE {n} of {total} of a larger plan. Review this phase in full depth. The other phases appear only as an outline, so you can see boundaries and dependencies — do not review them.",
       "split.preface.coherence": "You are reviewing the STRUCTURE of a {total}-phase plan, not its implementation. Look exclusively for: phases in the wrong order, a phase depending on something that only exists later, contradictions between phases, gaps at the boundaries between phases, and missing completion criteria. Do not raise detail internal to a phase — another reviewer covers that.",
       "split.section.head": "## Plan context (shared by every phase)",
@@ -259,6 +269,9 @@
       "split.section.full_plan": "## Full plan",
       "split.outline.current": "   <-- this slice",
       "split.hint.not_splittable": "The plan has no phase headings (Phase N / Fase N). Use the monolithic plan-review: there is no way to split it without inventing boundaries.",
+      "wrapper.error.quota_exhausted": "Codex quota exhausted: no review was performed. Quota returns on {reset}. Parallel rounds (batch-*) draw every item's cost at once.",
+      "wrapper.error.quota_reset_unknown": "no date reported by Codex",
+      "batch.summary.skipped_quota": "Item not run: Codex quota was exhausted by another item of this same batch.",
 
       "complexity.cli.description": "Score plan complexity to decide whether to suggest the iterative mode (plan-review-iter) over the one-shot plan-review.",
       "complexity.cli.help.plan_file": "Path to the plan markdown file.",
